@@ -2,11 +2,12 @@ package store
 
 import (
 	"context"
-	"errors"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -83,6 +84,32 @@ func (s *Store) Sweep(ctx context.Context, cutoff time.Time) (int64, error) {
 	defer tx.Rollback()
 
 	ns := cutoff.UnixNano()
+	// steps_fts is a standalone FTS5 table with no foreign key to steps, so
+	// deleting steps leaves the full text of every message and tool payload
+	// behind — the retention sweep used to "delete" runs while their content
+	// stayed searchable and on disk forever. Delete the FTS rows first, while
+	// the steps they describe are still there to identify them.
+	ftsRes, err := tx.ExecContext(ctx, `
+		DELETE FROM steps_fts
+		 WHERE (project, step_id) IN (
+			SELECT CASE WHEN project = '' THEN 'default' ELSE project END, id
+			  FROM steps WHERE run_id IN (SELECT id FROM runs WHERE start_ns < ?1))`,
+		ns)
+	if err != nil {
+		return 0, fmt.Errorf("sweep fts rows: %w", err)
+	}
+	// Also drop rows that already lost their step (deleted by an older
+	// version of this sweep, or left by a failed ingest). They can never be
+	// returned by a search — the search joins runs — but they still hold
+	// message text, so they must not survive a sweep on an existing db.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM steps_fts
+		 WHERE NOT EXISTS (
+			SELECT 1 FROM steps s
+			 WHERE s.id = steps_fts.step_id
+			   AND CASE WHEN s.project = '' THEN 'default' ELSE s.project END = steps_fts.project)`); err != nil {
+		return 0, fmt.Errorf("sweep orphaned fts rows: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM assertion_results WHERE run_id IN (SELECT id FROM runs WHERE start_ns < ?)`, ns); err != nil {
 		return 0, err
@@ -99,5 +126,34 @@ func (s *Store) Sweep(ctx context.Context, cutoff time.Time) (int64, error) {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
-	return n, tx.Commit()
+	ftsN, _ := ftsRes.RowsAffected()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	if n > 0 || ftsN > 0 {
+		s.reclaim(ctx)
+	}
+	return n, nil
+}
+
+// reclaim gives back the space a sweep freed. Deleting rows leaves their
+// bytes in the file's free pages and in the WAL until the database is
+// rewritten and the WAL checkpointed, so without this the swept message text
+// is still sitting in a (0600) file — and the file never shrinks.
+//
+// Best effort by design: the deletions are already committed, so a reader
+// holding a lock must not turn a successful sweep into an error.
+func (s *Store) reclaim(ctx context.Context) {
+	if _, err := s.writer.ExecContext(ctx, `INSERT INTO steps_fts(steps_fts) VALUES('optimize')`); err != nil {
+		slog.Warn("sweep: fts optimize failed", "err", err)
+	}
+	if _, err := s.writer.ExecContext(ctx, `VACUUM`); err != nil {
+		slog.Warn("sweep: vacuum failed", "err", err)
+		return
+	}
+	// VACUUM leaves the (now useless) WAL behind in WAL mode; truncate it so
+	// the pre-sweep pages aren't kept on disk either.
+	if _, err := s.writer.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		slog.Warn("sweep: wal checkpoint failed", "err", err)
+	}
 }

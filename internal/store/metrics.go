@@ -39,10 +39,23 @@ func (s *Store) Metrics(ctx context.Context) (Metrics, error) {
 	if err := s.reader.QueryRowContext(ctx, `SELECT coalesce(sum(firing),0) FROM alerts`).Scan(&m.AlertsFiring); err != nil {
 		return Metrics{}, err
 	}
-	if s.path != "" {
-		if fi, err := os.Stat(s.path); err == nil {
-			m.DBSizeBytes = fi.Size()
+	m.DBSizeBytes = dbSizeBytes(s.path)
+	return m, nil
+}
+
+// dbSizeBytes is the store's real on-disk footprint: the main database file
+// plus the -wal and -shm siblings. In WAL mode almost all recent data — and
+// often the whole database, on a busy instance — lives in the WAL, so
+// reporting the main file alone understates the size by orders of magnitude.
+func dbSizeBytes(path string) int64 {
+	if isMemoryPath(path) {
+		return 0
+	}
+	var total int64
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if fi, err := os.Stat(p); err == nil {
+			total += fi.Size()
 		}
 	}
-	return m, nil
+	return total
 }

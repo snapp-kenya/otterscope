@@ -505,6 +505,30 @@ td.truncate {
   margin: 0.4rem 0 0;
 }
 
+/* A settled failure, next to the retry that clears it. */
+.load-error {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin: 0.6rem 0;
+}
+
+.list-pager {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: 0.8rem 0 0.2rem;
+}
+
+.list-pager button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .csv-btn:hover {
   color: var(--fg);
   border-color: var(--accent);

@@ -15,13 +15,20 @@ import (
 
 func f64(v float64) *float64 { return &v }
 
+// allowLoopbackWebhooks turns off the address gate for watcher tests whose
+// webhook is an httptest server on 127.0.0.1. The gate itself is covered in
+// webhook_test.go; these tests are about notification behaviour.
+func allowLoopbackWebhooks(w *Watcher) {
+	w.checkWebhook = func(context.Context, string) error { return nil }
+}
+
 func TestValidate(t *testing.T) {
-	base := store.Rule{Name: "n", WebhookURL: "http://x", WindowSecs: 3600}
+	base := store.Rule{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600}
 	good := []store.Rule{
-		{Name: "n", WebhookURL: "http://x", WindowSecs: 3600, Type: "error_rate", Threshold: 0.1},
-		{Name: "n", WebhookURL: "http://x", WindowSecs: 3600, Type: "cost", Threshold: 5},
-		{Name: "n", WebhookURL: "http://x", WindowSecs: 3600, Type: "p95_latency", Threshold: 1000},
-		{Name: "n", WebhookURL: "http://x", WindowSecs: 3600, Type: "assertion_fail_rate", Threshold: 0.2, Config: "a"},
+		{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "error_rate", Threshold: 0.1},
+		{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "cost", Threshold: 5},
+		{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "p95_latency", Threshold: 1000},
+		{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "assertion_fail_rate", Threshold: 0.2, Config: "a"},
 	}
 	for _, r := range good {
 		if err := Validate(r); err != nil {
@@ -29,11 +36,11 @@ func TestValidate(t *testing.T) {
 		}
 	}
 	bad := []store.Rule{
-		{Name: "", WebhookURL: "http://x", WindowSecs: 3600, Type: "cost", Threshold: 1},
+		{Name: "", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "cost", Threshold: 1},
 		func() store.Rule { r := base; r.Type = "cost"; r.WebhookURL = ""; r.Threshold = 1; return r }(),
-		{Name: "n", WebhookURL: "http://x", WindowSecs: 3600, Type: "error_rate", Threshold: 5},
-		{Name: "n", WebhookURL: "http://x", WindowSecs: 3600, Type: "assertion_fail_rate", Threshold: 0.2},
-		{Name: "n", WebhookURL: "http://x", WindowSecs: 3600, Type: "bogus", Threshold: 1},
+		{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "error_rate", Threshold: 5},
+		{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "assertion_fail_rate", Threshold: 0.2},
+		{Name: "n", WebhookURL: "https://93.184.216.34/hook", WindowSecs: 3600, Type: "bogus", Threshold: 1},
 	}
 	for i, r := range bad {
 		if err := Validate(r); err == nil {
@@ -128,6 +135,7 @@ func TestWatcherFiresAndResolves(t *testing.T) {
 		set:   map[int64]bool{},
 	}
 	w := NewWatcher(fs, time.Hour)
+	allowLoopbackWebhooks(w)
 
 	w.EvaluateOnce(context.Background())
 	if len(got) != 1 || got[0].Status != "firing" {

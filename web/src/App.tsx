@@ -5,19 +5,22 @@ import Compare from "./Compare";
 import Alerts from "./Alerts";
 import SharedRun from "./SharedRun";
 import Audit from "./Audit";
+import { stripBase, withBase } from "./base";
 
 type Health = { status: string; version: string };
 
-// Two views don't justify a router dependency: path state + popstate.
+// Two views don't justify a router dependency: path state + popstate. The
+// state is app-relative ("/runs/abc"); the browser's pathname carries the mount
+// prefix, so it is stripped on the way in and re-applied on the way out.
 function usePath(): [string, (p: string) => void] {
-  const [path, setPath] = useState(window.location.pathname);
+  const [path, setPath] = useState(() => stripBase(window.location.pathname));
   useEffect(() => {
-    const onPop = () => setPath(window.location.pathname);
+    const onPop = () => setPath(stripBase(window.location.pathname));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   const navigate = (p: string) => {
-    window.history.pushState(null, "", p);
+    window.history.pushState(null, "", withBase(p));
     setPath(p);
   };
   return [path, navigate];
@@ -28,7 +31,7 @@ export default function App() {
   const [path, navigate] = usePath();
 
   useEffect(() => {
-    fetch("/healthz")
+    fetch(withBase("/healthz"))
       .then((r) => r.json())
       .then(setHealth)
       .catch(() => {});
@@ -54,7 +57,7 @@ export default function App() {
         <span className="tagline">{health ? `v${health.version}` : "…"}</span>
         <nav>
           <a
-            href="/compare"
+            href={withBase("/compare")}
             onClick={(e) => {
               e.preventDefault();
               navigate("/compare");
@@ -63,7 +66,7 @@ export default function App() {
             compare
           </a>
           <a
-            href="/alerts"
+            href={withBase("/alerts")}
             onClick={(e) => {
               e.preventDefault();
               navigate("/alerts");
@@ -72,7 +75,7 @@ export default function App() {
             alerts
           </a>
           <a
-            href="/audit"
+            href={withBase("/audit")}
             onClick={(e) => {
               e.preventDefault();
               navigate("/audit");

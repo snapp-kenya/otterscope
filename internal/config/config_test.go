@@ -17,6 +17,30 @@ func TestDefaults(t *testing.T) {
 	if c.DB != "otterscope.db" || c.Listen != "127.0.0.1:8317" || c.AlertInterval != time.Minute {
 		t.Fatalf("defaults wrong: %+v", c)
 	}
+	// The rate limit must be finite out of the box, or an exposed receiver is
+	// a free amplifier.
+	if c.IngestRate <= 0 || c.IngestBurst <= 0 {
+		t.Fatalf("ingest rate limit must default to a finite value, got rate=%v burst=%v", c.IngestRate, c.IngestBurst)
+	}
+	if c.MaxSpansPerBatch <= 0 || c.MaxTraceIDsPerBatch <= 0 {
+		t.Fatalf("per-batch caps must default to finite values, got %d/%d", c.MaxSpansPerBatch, c.MaxTraceIDsPerBatch)
+	}
+	// Fail closed: an assertion may not name a judge model until an operator
+	// allows one, or a caller picks the price of every judge call.
+	if len(c.JudgeModels) != 0 {
+		t.Fatalf("judge model allow-list must default to empty, got %v", c.JudgeModels)
+	}
+}
+
+func TestJudgeModelsFromEnv(t *testing.T) {
+	env := map[string]string{"OTTERSCOPE_JUDGE_MODELS": " gpt-4o-mini, ,o3-mini "}
+	c, err := Load("", func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.JudgeModels) != 2 || c.JudgeModels[0] != "gpt-4o-mini" || c.JudgeModels[1] != "o3-mini" {
+		t.Fatalf("judge models = %v, want the two named models with blanks dropped", c.JudgeModels)
+	}
 }
 
 func TestFileOverlaysDefaults(t *testing.T) {

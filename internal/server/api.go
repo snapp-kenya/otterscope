@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/otterscope/otterscope/internal/alerts"
+	"github.com/otterscope/otterscope/internal/basepath"
 	"github.com/otterscope/otterscope/internal/evals"
 	"github.com/otterscope/otterscope/internal/ingest"
 	"github.com/otterscope/otterscope/internal/model"
@@ -173,7 +174,7 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create share"})
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"token": token, "url": "/s/" + token})
+	writeJSON(w, http.StatusCreated, map[string]string{"token": token, "url": basepath.Join(s.basePath, "/s/"+token)})
 }
 
 // handleListShares serves GET /api/runs/{id}/shares.
@@ -236,7 +237,8 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
-// handleListTokens serves GET /api/tokens.
+// handleListTokens serves GET /api/tokens. Tokens are identified by id; the
+// secrets are only stored as digests, so they cannot be returned.
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	toks, err := s.st.ListReadTokens(r.Context())
 	if err != nil {
@@ -244,21 +246,31 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if toks == nil {
-		toks = []store.ReadToken{}
+		toks = []store.Token{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": toks})
 }
 
-// handleCreateToken serves POST /api/tokens.
+// handleCreateToken serves POST /api/tokens. The response is the only time the
+// secret is returned; scope defaults to read so a token is not accidentally
+// minted stronger than asked.
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name  string      `json:"name"`
+		Scope store.Scope `json:"scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
 		return
 	}
-	tok, err := s.st.CreateReadToken(r.Context(), body.Name)
+	if body.Scope == "" {
+		body.Scope = store.ScopeRead
+	}
+	if body.Scope != store.ScopeRead && body.Scope != store.ScopeAdmin {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": `scope must be "read" or "admin"`})
+		return
+	}
+	tok, err := s.st.CreateToken(r.Context(), body.Name, body.Scope)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not create token"})
 		return
@@ -266,9 +278,10 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, tok)
 }
 
-// handleDeleteToken serves DELETE /api/tokens/{token}.
+// handleDeleteToken serves DELETE /api/tokens/{id}. The path carries the
+// identifier from the listing, never the secret.
 func (s *Server) handleDeleteToken(w http.ResponseWriter, r *http.Request) {
-	writeDeleteResult(w, "revoke", s.st.DeleteReadToken(r.Context(), r.PathValue("token")))
+	writeDeleteResult(w, "revoke", s.st.DeleteReadToken(r.Context(), r.PathValue("id")))
 }
 
 // handleListViews serves GET /api/views.
@@ -345,6 +358,14 @@ func (s *Server) handleCreateAssertion(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// The assertion picks the judge model, so creation is the cheapest place
+	// to refuse one the operator has not allowed.
+	if model, err := a.JudgeModel(); err == nil && model != "" {
+		if err := s.judge.CheckModel(model); err != nil {
+			writeProblem(w, r, http.StatusBadRequest, "judge model not allowed", err.Error())
+			return
+		}
+	}
 	created, err := s.st.CreateAssertion(r.Context(), a)
 	if err != nil {
 		writeStoreError(w, "create assertion", err, fmt.Sprintf("an assertion named %q already exists in this project", a.Name))
@@ -364,19 +385,96 @@ func (s *Server) handleDeleteAssertion(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleEvaluate serves POST /api/assertions/evaluate?project= — on-demand
-// backfill over all completed runs.
+// backfill of assertion results.
+//
+// The call must be bounded: ?run=<id>, a ?since=/?until= window, or an
+// explicit ?limit=N. A bare project scored every run in it, which was both
+// unbounded CPU and, with a judge key configured, one paid model call per run
+// against whatever model the assertion named. Even a bounded call is capped
+// (ingest.MaxEvaluateRuns runs, ingest.MaxEvaluateJudgeCalls judge calls) and
+// the response reports what the caps skipped.
 func (s *Server) handleEvaluate(w http.ResponseWriter, r *http.Request) {
-	project := r.URL.Query().Get("project")
+	q := r.URL.Query()
+	project := q.Get("project")
 	if project == "" {
 		project = "default"
 	}
-	n, err := ingest.EvaluateProject(r.Context(), s.st, s.judge, project)
+	opts := ingest.EvaluateOptions{Project: project, RunID: q.Get("run")}
+	var err error
+	if opts.Since, err = parseBound(q.Get("since")); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid evaluate bound", "since: "+err.Error())
+		return
+	}
+	if opts.Until, err = parseBound(q.Get("until")); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "invalid evaluate bound", "until: "+err.Error())
+		return
+	}
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			writeProblem(w, r, http.StatusBadRequest, "invalid evaluate bound",
+				fmt.Sprintf("limit must be a positive integer, got %q", v))
+			return
+		}
+		opts.Limit = n
+	}
+	if err := opts.Validate(); err != nil {
+		if errors.Is(err, ingest.ErrUnboundedEvaluate) {
+			writeProblem(w, r, http.StatusBadRequest, "evaluate needs a bound", err.Error(),
+				"run", "since/until", "limit")
+			return
+		}
+		writeProblem(w, r, http.StatusBadRequest, "invalid evaluate bound", err.Error())
+		return
+	}
+
+	// Refuse before any work: an assertion names its judge model, so the
+	// allow-list is what stops a caller choosing the priciest model the key
+	// can reach.
+	asserts, err := s.st.ListAssertions(r.Context(), project)
 	if err != nil {
+		slog.Error("api: list assertions for evaluate", "project", project, "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
+		return
+	}
+	if err := s.checkJudgeModels(asserts); err != nil {
+		writeProblem(w, r, http.StatusBadRequest, "judge model not allowed", err.Error())
+		return
+	}
+
+	rep, err := ingest.EvaluateProject(r.Context(), s.st, s.judge, opts)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeProblem(w, r, http.StatusNotFound, "run not found", err.Error())
+			return
+		}
 		slog.Error("api: evaluate project", "project", project, "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "evaluation failed"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runsEvaluated": n})
+	writeJSON(w, http.StatusOK, rep)
+}
+
+// checkJudgeModels refuses a project whose enabled llm_judge assertions name
+// a model outside the configured allow-list. The error names the assertion
+// and the refused model, so the fix is obvious from the response.
+func (s *Server) checkJudgeModels(asserts []evals.Assertion) error {
+	for _, a := range asserts {
+		if !a.Enabled {
+			continue
+		}
+		model, err := a.JudgeModel()
+		if err != nil {
+			return fmt.Errorf("assertion %q has an invalid config: %w", a.Name, err)
+		}
+		if model == "" {
+			continue
+		}
+		if err := s.judge.CheckModel(model); err != nil {
+			return fmt.Errorf("assertion %q: %w", a.Name, err)
+		}
+	}
+	return nil
 }
 
 // handleListRuns serves GET /api/runs?limit=&offset=.
@@ -526,10 +624,24 @@ func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
 	}
-	if out == nil {
-		out = []store.Rule{}
+	writeJSON(w, http.StatusOK, map[string]any{"alerts": redactedAlerts(out)})
+}
+
+// redactedAlert reduces a rule's webhook URL to host + a masked path. The full
+// value stays in the store for the watcher; the path is where Slack, Discord
+// and most other services keep the token that authorises a POST, so it is not
+// something any read path may hand back.
+func redactedAlert(r store.Rule) store.Rule {
+	r.WebhookURL = alerts.RedactWebhookURL(r.WebhookURL)
+	return r
+}
+
+func redactedAlerts(in []store.Rule) []store.Rule {
+	out := make([]store.Rule, len(in))
+	for i, r := range in {
+		out[i] = redactedAlert(r)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"alerts": out})
+	return out
 }
 
 // handleCreateAlert serves POST /api/alerts.
@@ -555,7 +667,8 @@ func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, "create alert", err, fmt.Sprintf("an alert named %q already exists in this project", rule.Name))
 		return
 	}
-	writeJSON(w, http.StatusCreated, created)
+	// The create ack is a read of the stored row, so it is redacted too.
+	writeJSON(w, http.StatusCreated, redactedAlert(created))
 }
 
 // handleDeleteAlert serves DELETE /api/alerts/{id}.

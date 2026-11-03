@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/otterscope/otterscope/internal/basepath"
 	"github.com/otterscope/otterscope/internal/config"
 	"github.com/otterscope/otterscope/internal/evals"
 	"github.com/otterscope/otterscope/internal/ingest"
@@ -115,8 +116,9 @@ commands:
   project add <name>      create a project and print its ingest key
   project list            list projects and their ingest keys
   sample                  seed demo data (services, runs, assertions)
-  token add <name>        create a read-API token and print it
-  token list              list read-API tokens
+  token add <name>        create a read-API token and print it (use -admin
+                          for a token that may also mutate)
+  token list              list tokens by id, scope and last use
   backup -o <file>        write a consistent snapshot of the database
   renormalize             replay stored raw batches through the current
                           normalizer and pricing table (backfill after upgrades)
@@ -139,11 +141,19 @@ func serve(args []string) error {
 	pricingPath := fs.String("pricing", cfg.Pricing, "JSON file of pricing overrides, merged over built-in rates")
 	retention := fs.Duration("retention", cfg.Retention, "delete runs older than this (e.g. 720h = 30 days); 0 keeps everything")
 	judgeURL := fs.String("judge-url", cfg.JudgeURL, "OpenAI-compatible endpoint for llm_judge assertions")
+	judgeModels := fs.String("judge-models", strings.Join(cfg.JudgeModels, ","), "comma-separated allow-list of models an llm_judge assertion may name (default: none — llm_judge assertions are refused until a model is allowed)")
 	alertInterval := fs.Duration("alert-interval", cfg.AlertInterval, "how often to evaluate alert rules; 0 disables alerting")
-	readAuth := fs.Bool("read-auth", cfg.ReadAuth, "require a read token (Bearer) on the API + MCP; create tokens with 'otterscope token add'")
-	ingestRate := fs.Float64("ingest-rate", cfg.IngestRate, "max OTLP batches/sec per ingest key (0 = unlimited)")
+	readAuth := fs.Bool("read-auth", cfg.ReadAuth, "require a read token (Bearer) on the API + MCP and an ingest key on OTLP (no keyless 'default'); create tokens with 'otterscope token add'")
+	ingestRate := fs.Float64("ingest-rate", cfg.IngestRate, "max OTLP batches/sec per ingest key (default 50; 0 = unlimited)")
 	ingestBurst := fs.Float64("ingest-burst", cfg.IngestBurst, "ingest burst allowance per key (0 = 2x rate)")
+	maxSpans := fs.Int("ingest-max-spans", cfg.MaxSpansPerBatch, "max spans one OTLP batch may carry; larger batches are refused")
+	maxTraceIDs := fs.Int("ingest-max-trace-ids", cfg.MaxTraceIDsPerBatch, "max distinct trace ids one OTLP batch may touch; larger batches are refused")
+	basePath := fs.String("base-path", cfg.BasePath, "mount the whole app under a path prefix, e.g. /otterscope (default: root)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	prefix, err := basepath.Normalize(*basePath)
+	if err != nil {
 		return err
 	}
 
@@ -178,9 +188,20 @@ func serve(args []string) error {
 	if judgeKey == "" {
 		judgeKey = os.Getenv("OPENAI_API_KEY")
 	}
-	judge := evals.Endpoint{BaseURL: *judgeURL, Key: judgeKey}
+	judge := evals.Endpoint{BaseURL: *judgeURL, Key: judgeKey, Models: config.ParseModelList(*judgeModels)}
+	if len(judge.Models) == 0 {
+		slog.Info("llm_judge assertions disabled: no judge model allow-list (set -judge-models or OTTERSCOPE_JUDGE_MODELS)")
+	}
 
-	srv := server.New(st, prices, judge, *alertInterval, *readAuth, *ingestRate, *ingestBurst, version)
+	srv := server.New(st, prices, judge, *alertInterval, *readAuth, ingest.Options{
+		RatePerSec:  *ingestRate,
+		Burst:       *ingestBurst,
+		MaxSpans:    *maxSpans,
+		MaxTraceIDs: *maxTraceIDs,
+	}, prefix, version)
+	if prefix != "" {
+		slog.Info("mounted under base path", "basePath", prefix)
+	}
 	return srv.Run(ctx, *uiAddr, *otlpAddr)
 }
 
@@ -275,11 +296,12 @@ func tokenCmd(args []string) error {
 	}
 	fs := flag.NewFlagSet("token", flag.ExitOnError)
 	dbPath := dbFlags(fs, cfg, configPath)
+	admin := fs.Bool("admin", false, "grant mutation rights (tokens default to read-only)")
 	rest := args[1:]
 	var name string
 	if sub == "add" {
 		if len(rest) < 1 || strings.HasPrefix(rest[0], "-") {
-			return fmt.Errorf("usage: otterscope token add <name> [-db path]")
+			return fmt.Errorf("usage: otterscope token add <name> [-admin] [-db path]")
 		}
 		name, rest = rest[0], rest[1:]
 	}
@@ -295,11 +317,15 @@ func tokenCmd(args []string) error {
 
 	switch sub {
 	case "add":
-		t, err := st.CreateReadToken(ctx, name)
+		scope := store.ScopeRead
+		if *admin {
+			scope = store.ScopeAdmin
+		}
+		t, err := st.CreateToken(ctx, name, scope)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("read token %q created\ntoken: %s\n\nuse it as:\n  curl -H \"Authorization: Bearer %s\" http://localhost:8317/api/runs\n", t.Name, t.Token, t.Token)
+		fmt.Printf("%s token %q created (id %s)\ntoken: %s\n\nuse it as:\n  curl -H \"Authorization: Bearer %s\" http://localhost:8317/api/runs\n\nThe token is not stored; this is the only time it is shown.\n", t.Scope, t.Name, t.ID, t.Token, t.Token)
 		return nil
 	case "list":
 		toks, err := st.ListReadTokens(ctx)
@@ -307,7 +333,12 @@ func tokenCmd(args []string) error {
 			return err
 		}
 		for _, t := range toks {
-			fmt.Printf("%-20s %s\n", t.Name, t.Token)
+			used := "never"
+			if t.LastUsedAt != nil {
+				used = t.LastUsedAt.Format(time.RFC3339)
+			}
+			fmt.Printf("%-20s %-20s %-6s created %s, last used %s\n",
+				t.ID, t.Name, t.Scope, t.CreatedAt.Format(time.RFC3339), used)
 		}
 		return nil
 	default:

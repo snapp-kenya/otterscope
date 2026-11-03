@@ -112,6 +112,94 @@ func TestNoBackupOnFreshInit(t *testing.T) {
 	}
 }
 
+// A snapshot is a full copy of a database that holds prompts and message
+// text, so it must be as private as the database itself (VACUUM INTO
+// otherwise honours the umask and writes 0644).
+func TestBackupFileIsPrivate(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := Open(ctx, filepath.Join(dir, "src.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	dest := filepath.Join(dir, "snapshot.db")
+	if err := st.Backup(ctx, dest); err != nil {
+		t.Fatalf("Backup: %v", err)
+	}
+	assertMode(t, dest, 0o600)
+}
+
+// Every schema upgrade writes a full database copy next to the db. Keeping
+// them all lets a long-lived instance mirror its database many times over, so
+// only the newest may survive — and it must be the newest, not just any.
+func TestPreMigrationBackupsPruneToNewest(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "up.db")
+	st, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.UpsertSteps(ctx, sampleRun("r1", 1000)); err != nil {
+		t.Fatal(err)
+	}
+
+	var newest string
+	for i := 0; i < 3; i++ {
+		before := backupFiles(t, path)
+		if err := st.backupBeforeMigrate(ctx); err != nil {
+			t.Fatalf("backup #%d: %v", i+1, err)
+		}
+		after := backupFiles(t, path)
+		newest = newBackup(before, after)
+		if newest == "" {
+			t.Fatalf("backup #%d created no new snapshot (have %v)", i+1, after)
+		}
+		if got := len(after); got != 1 {
+			t.Fatalf("after backup #%d: %d backups on disk, want 1 (%v)", i+1, got, after)
+		}
+	}
+
+	baks := backupFiles(t, path)
+	if len(baks) != 1 {
+		t.Fatalf("kept %d backups, want 1: %v", len(baks), baks)
+	}
+	if baks[0] != newest {
+		t.Fatalf("kept %q, want the newest %q", baks[0], newest)
+	}
+	assertMode(t, baks[0], 0o600)
+
+	// The survivor is still a valid, complete snapshot.
+	raw, err := sql.Open("sqlite", "file:"+baks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var n int
+	if err := raw.QueryRowContext(ctx, `SELECT count(*) FROM runs`).Scan(&n); err != nil {
+		t.Fatalf("query backup: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("kept backup holds %d runs, want 1", n)
+	}
+}
+
+// newBackup returns the path present in after but not in before.
+func newBackup(before, after []string) string {
+	seen := make(map[string]bool, len(before))
+	for _, b := range before {
+		seen[b] = true
+	}
+	for _, a := range after {
+		if !seen[a] {
+			return a
+		}
+	}
+	return ""
+}
+
 func backupFiles(t *testing.T, dbPath string) []string {
 	t.Helper()
 	matches, err := filepath.Glob(dbPath + ".pre-migrate-*.bak")

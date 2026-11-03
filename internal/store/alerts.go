@@ -29,7 +29,6 @@ type Rule struct {
 	PendingSinceNS int64 `json:"pendingSinceNs,omitempty"`
 }
 
-
 // CreateAlert stores a validated alert rule.
 func (s *Store) CreateAlert(ctx context.Context, r Rule) (Rule, error) {
 	if r.Project == "" {

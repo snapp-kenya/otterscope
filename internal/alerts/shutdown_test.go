@@ -52,6 +52,7 @@ func TestStopCancelsInFlightWebhook(t *testing.T) {
 	defer close(release)
 
 	w := NewWatcher(hangStore{url: srv.URL}, 10*time.Millisecond)
+	allowLoopbackWebhooks(w)
 	w.Start()
 
 	select {

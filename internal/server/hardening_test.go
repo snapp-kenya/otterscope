@@ -16,9 +16,11 @@ func do(t *testing.T, srv *Server, method, target, body string) *httptest.Respon
 	t.Helper()
 	var r *http.Request
 	if body == "" {
-		r = httptest.NewRequest(method, target, nil)
+		r = newReq(method, target, nil)
 	} else {
-		r = httptest.NewRequest(method, target, strings.NewReader(body))
+		r = newReq(method, target, strings.NewReader(body))
+		// The UI's writes are JSON; a bodiless write (DELETE) sends nothing.
+		r.Header.Set("Content-Type", "application/json")
 	}
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, r)

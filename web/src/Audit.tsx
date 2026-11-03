@@ -1,20 +1,62 @@
 import { useEffect, useState } from "react";
-import { apiFetch } from "./api";
-import { fmtStart } from "./api";
+import { apiFetch, failureMessage, fmtStart, transportMessage } from "./api";
+import { withBase } from "./base";
 
 type Entry = { at: string; action: string; entity: string; detail: string };
 
 export default function Audit() {
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    apiFetch("/api/audit?limit=500")
-      .then((r) => r.json())
-      .then((d) => setEntries(d.entries))
-      .catch(() => {});
-  }, []);
+    let stop = false;
+    const load = async () => {
+      try {
+        const res = await apiFetch(withBase("/api/audit?limit=500"));
+        if (!res.ok) {
+          // The old catch dropped this on the floor and left the null
+          // sentinel meaning "loading", so a 500 or a dismissed token prompt
+          // spun forever.
+          const msg = await failureMessage(res);
+          if (!stop) setError(msg);
+          return;
+        }
+        const d = await res.json();
+        if (!stop) {
+          setEntries(d.entries ?? []);
+          setError(null);
+        }
+      } catch (err) {
+        if (!stop) setError(transportMessage(err));
+      }
+    };
+    load();
+    return () => {
+      stop = true;
+    };
+  }, [attempt]);
 
-  if (entries === null) return <p className="hint">loading…</p>;
+  const retry = () => {
+    setError(null);
+    setAttempt((n) => n + 1);
+  };
+
+  if (entries === null) {
+    if (error) {
+      return (
+        <p className="load-error" role="status">
+          <span className="run-error">
+            Couldn&apos;t load the audit log — {error}.
+          </span>
+          <button className="link-btn accent" onClick={retry}>
+            retry
+          </button>
+        </p>
+      );
+    }
+    return <p className="hint">loading…</p>;
+  }
 
   return (
     <div>
@@ -23,6 +65,16 @@ export default function Audit() {
         Every create/delete of assertions, alerts, projects, tokens, views, and
         shares — from the UI, API, or CLI.
       </p>
+      {error && (
+        <p className="load-error" role="status">
+          <span className="run-error">
+            Couldn&apos;t refresh the audit log — {error}.
+          </span>
+          <button className="link-btn accent" onClick={retry}>
+            retry
+          </button>
+        </p>
+      )}
       {entries.length === 0 ? (
         <p className="hint">No changes recorded yet.</p>
       ) : (

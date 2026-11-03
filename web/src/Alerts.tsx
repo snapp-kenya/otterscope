@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { apiFetch } from "./api";
+import { apiFetch, failureMessage, transportMessage } from "./api";
+import { withBase } from "./base";
+import { parseThreshold } from "./alertForm";
 
 type Alert = {
   id: number;
@@ -41,6 +43,8 @@ const SETTLES = [
 
 export default function Alerts() {
   const [alerts, setAlerts] = useState<Alert[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [form, setForm] = useState({
     name: "",
     type: "error_rate",
@@ -52,39 +56,60 @@ export default function Alerts() {
   });
   const [error, setError] = useState("");
 
-  const load = () =>
-    apiFetch("/api/alerts")
-      .then((r) => r.json())
-      .then((d) => setAlerts(d.alerts))
-      .catch(() => {});
+  const load = async () => {
+    try {
+      const res = await apiFetch(withBase("/api/alerts"));
+      if (!res.ok) {
+        setLoadError(await failureMessage(res));
+        return;
+      }
+      const d = await res.json();
+      setAlerts(d.alerts ?? []);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(transportMessage(err));
+    }
+  };
 
+  // `attempt` is the retry button: bumping it re-arms the poll after a failure.
   useEffect(() => {
     load();
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [attempt]);
+
+  const typeInfo = TYPES.find((t) => t.v === form.type)!;
 
   const create = async () => {
     setError("");
-    const res = await apiFetch("/api/alerts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, threshold: Number(form.threshold) }),
-    });
-    if (res.ok) {
-      setForm({ ...form, name: "", webhookUrl: "" });
-      load();
-    } else {
-      setError((await res.json()).error ?? "failed");
+    const parsed = parseThreshold(form.threshold, typeInfo.hint);
+    if (!parsed.ok) {
+      // Never send it: a non-finite threshold serialises as null, which the
+      // server stores as 0 — an alert that fires forever.
+      setError(parsed.error);
+      return;
+    }
+    try {
+      const res = await apiFetch(withBase("/api/alerts"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, threshold: parsed.value }),
+      });
+      if (res.ok) {
+        setForm({ ...form, name: "", webhookUrl: "" });
+        load();
+      } else {
+        setError((await res.json()).error ?? "failed");
+      }
+    } catch (err) {
+      setError(`Could not reach the server — ${transportMessage(err)}.`);
     }
   };
 
   const remove = async (id: number) => {
-    await apiFetch(`/api/alerts/${id}`, { method: "DELETE" });
+    await apiFetch(withBase(`/api/alerts/${id}`), { method: "DELETE" });
     load();
   };
-
-  const typeInfo = TYPES.find((t) => t.v === form.type)!;
 
   return (
     <div>
@@ -159,6 +184,22 @@ export default function Alerts() {
         </button>
       </div>
       {error && <p className="run-error">{error}</p>}
+
+      {loadError && (
+        <p className="load-error" role="status">
+          <span className="run-error">Couldn&apos;t load alerts — {loadError}.</span>
+          <button
+            className="link-btn accent"
+            onClick={() => {
+              setLoadError(null);
+              setAttempt((n) => n + 1);
+            }}
+          >
+            retry
+          </button>
+        </p>
+      )}
+      {alerts === null && !loadError && <p className="hint">loading…</p>}
 
       {alerts && alerts.length > 0 && (
         <table className="runs">

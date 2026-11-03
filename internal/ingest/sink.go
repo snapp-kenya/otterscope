@@ -32,18 +32,25 @@ func NewStoreSink(st *store.Store, prices *pricing.Table, eval *Evaluator, notif
 }
 
 // ConsumeTraces implements Sink.
-func (s *StoreSink) ConsumeTraces(ctx context.Context, project string, td ptrace.Traces) error {
+func (s *StoreSink) ConsumeTraces(ctx context.Context, project string, td ptrace.Traces) (Result, error) {
 	raw, err := compressTraces(td)
 	if err != nil {
-		return fmt.Errorf("compress raw batch: %w", err)
+		return Result{}, fmt.Errorf("compress raw batch: %w", err)
 	}
 	steps := Normalize(td)
 	priceSteps(steps, s.prices)
 	for i := range steps {
 		steps[i].Project = project
 	}
-	if err := s.st.IngestBatch(ctx, project, raw, steps); err != nil {
-		return err
+	rejected, err := s.st.IngestBatch(ctx, project, raw, steps)
+	if err != nil {
+		return Result{}, err
+	}
+	res := Result{RejectedSpans: rejected}
+	if rejected > 0 {
+		res.Message = fmt.Sprintf(
+			"%d span(s) rejected: an existing step with the same span id belongs to a different service",
+			rejected)
 	}
 
 	if s.notify != nil {
@@ -62,7 +69,7 @@ func (s *StoreSink) ConsumeTraces(ctx context.Context, project string, td ptrace
 		}
 		s.eval.Enqueue(refs)
 	}
-	return nil
+	return res, nil
 }
 
 // priceSteps stamps CostUSD on llm steps with a known model. Unknown models

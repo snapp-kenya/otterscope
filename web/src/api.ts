@@ -99,6 +99,30 @@ export function csvTruncationNotice(res: Response): string | null {
   return `More runs matched than could be exported — this file holds the newest ${limit}. Narrow the filters for the rest.`;
 }
 
+// A failed request used to look exactly like a slow one: the views caught and
+// dropped the error and left the null sentinel in place, so a 500, an offline
+// network or a dismissed token prompt read as "loading…" forever. These turn a
+// failure into a sentence a view can settle on, next to a retry.
+export async function failureMessage(res: Response): Promise<string> {
+  let detail = "";
+  try {
+    const body = await res.json();
+    if (body && typeof body.error === "string") detail = body.error;
+  } catch {
+    // Error bodies are not always JSON (a proxy's HTML, an empty body). The
+    // status alone is still true, so show that rather than nothing.
+  }
+  const status = res.statusText ? `${res.status} ${res.statusText}` : String(res.status);
+  return detail ? `${status}: ${detail}` : status;
+}
+
+export function transportMessage(err: unknown): string {
+  const detail = err instanceof Error ? err.message : String(err ?? "");
+  return detail
+    ? `Could not reach the server (${detail})`
+    : "Could not reach the server";
+}
+
 const TOKEN_KEY = "otterscope_token";
 
 export function readToken(): string {

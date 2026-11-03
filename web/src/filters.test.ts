@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  emptyFilters,
   filtersFromURL,
   filtersToQuery,
+  PAGE_SIZE,
   syncURL,
+  withFilterDefaults,
   type FilterState,
-} from "./filters";
+} from "./filterState";
 
 const empty: FilterState = {
   q: "",
@@ -140,6 +143,34 @@ describe("filtersFromURL", () => {
   });
 });
 
+describe("withFilterDefaults", () => {
+  it("fills the keys a view saved before they existed never had", () => {
+    const applied = withFilterDefaults({ model: "claude", status: "error" });
+    expect(applied).toEqual({ ...empty, model: "claude", status: "error" });
+    // Every key must be a string: an undefined value makes React treat the
+    // controlled input as uncontrolled, and it then ignores later views too.
+    for (const v of Object.values(applied)) expect(typeof v).toBe("string");
+  });
+
+  it("drops nulls and non-strings instead of passing them through", () => {
+    const applied = withFilterDefaults({
+      q: null as unknown as string,
+      prompt: 7 as unknown as string,
+    });
+    expect(applied.q).toBe("");
+    expect(applied.prompt).toBe("");
+  });
+
+  it("returns the full default set when a view has no params at all", () => {
+    expect(withFilterDefaults(null)).toEqual(emptyFilters);
+    expect(withFilterDefaults(undefined)).toEqual(emptyFilters);
+  });
+
+  it("keeps a range the view does carry", () => {
+    expect(withFilterDefaults({ range: "24h" }).range).toBe("24h");
+  });
+});
+
 describe("syncURL and filtersFromURL round-trip", () => {
   it("restores exactly what was written, including special characters", () => {
     const f: FilterState = {
@@ -166,5 +197,35 @@ describe("syncURL and filtersFromURL round-trip", () => {
     expect(filtersFromURL().project).toBe("alpha");
     syncURL(empty);
     expect(filtersFromURL().project).toBe("");
+  });
+});
+
+// The list used to fetch one fixed page of 100 and say nothing about the rest,
+// so run 101 was unreachable. The server pages with offset; these pin the
+// arithmetic the pager depends on.
+describe("filtersToQuery paging", () => {
+  it("asks for no offset on the first page", () => {
+    expect(new URLSearchParams(filtersToQuery(empty, 0)).has("offset")).toBe(false);
+  });
+
+  it("offsets by whole pages", () => {
+    const offset = (page: number) =>
+      new URLSearchParams(filtersToQuery(empty, page)).get("offset");
+
+    expect(offset(1)).toBe(String(PAGE_SIZE));
+    expect(offset(3)).toBe(String(PAGE_SIZE * 3));
+  });
+
+  it("keeps the page size off the offset when asking for the lookahead row", () => {
+    const params = new URLSearchParams(filtersToQuery(empty, 2, PAGE_SIZE + 1));
+    expect(params.get("limit")).toBe(String(PAGE_SIZE + 1));
+    // The extra row must not shift the window, or page 2 would start at 201.
+    expect(params.get("offset")).toBe(String(PAGE_SIZE * 2));
+  });
+
+  it("still sends the filters alongside the offset", () => {
+    const params = new URLSearchParams(filtersToQuery({ ...empty, q: "invoice" }, 1));
+    expect(params.get("q")).toBe("invoice");
+    expect(params.get("offset")).toBe(String(PAGE_SIZE));
   });
 });

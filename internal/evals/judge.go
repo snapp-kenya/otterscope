@@ -30,6 +30,54 @@ type JudgeConfig struct {
 type Endpoint struct {
 	BaseURL string
 	Key     string
+	// Models is the operator's allow-list of judge models
+	// (-judge-models / OTTERSCOPE_JUDGE_MODELS / judgeModels). An assertion
+	// names the model to use, so without this list any assertion author
+	// picks the price of every judge call — and, since assertions are
+	// writable through the API, an unauthenticated caller could name the
+	// most expensive model the key can reach. Empty means no model is
+	// allowed: judge assertions are refused rather than silently billed.
+	Models []string
+}
+
+// AllowsModel reports whether m is in the endpoint's allow-list. Matching is
+// case-insensitive because provider model ids differ only in case across
+// their own docs and SDKs.
+func (ep Endpoint) AllowsModel(m string) bool {
+	m = strings.TrimSpace(m)
+	for _, allowed := range ep.Models {
+		if strings.EqualFold(strings.TrimSpace(allowed), m) {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckModel returns an error naming the refused model and the allow-list, so
+// a caller can see both what was rejected and what would be accepted.
+func (ep Endpoint) CheckModel(m string) error {
+	if ep.AllowsModel(m) {
+		return nil
+	}
+	allowed := "none configured (set OTTERSCOPE_JUDGE_MODELS or judgeModels)"
+	if len(ep.Models) > 0 {
+		allowed = strings.Join(ep.Models, ", ")
+	}
+	return fmt.Errorf("judge model %q is not in the judge model allow-list [%s]", m, allowed)
+}
+
+// JudgeModel returns the model an llm_judge assertion names, or "" for any
+// other assertion type. A malformed config is reported so the caller can
+// refuse rather than evaluate.
+func (a Assertion) JudgeModel() (string, error) {
+	if a.Type != "llm_judge" {
+		return "", nil
+	}
+	cfg, err := parseJudgeConfig(a.Config)
+	if err != nil {
+		return "", err
+	}
+	return cfg.Model, nil
 }
 
 func parseJudgeConfig(raw string) (JudgeConfig, error) {
@@ -65,6 +113,10 @@ func Judge(ctx context.Context, ep Endpoint, a Assertion, run model.Run, steps [
 	}
 	if ep.Key == "" {
 		res.Detail = "judge skipped: OTTERSCOPE_JUDGE_KEY (or OPENAI_API_KEY) is not set"
+		return res
+	}
+	if err := ep.CheckModel(cfg.Model); err != nil {
+		res.Detail = err.Error()
 		return res
 	}
 

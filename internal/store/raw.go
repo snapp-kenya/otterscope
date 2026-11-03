@@ -10,22 +10,33 @@ import (
 
 // IngestBatch persists a raw ingested batch and its normalized steps in one
 // transaction. raw is the gzip-compressed protobuf of the original request.
-func (s *Store) IngestBatch(ctx context.Context, project string, raw []byte, steps []model.Step) error {
+//
+// It returns the number of steps refused because an existing (project, span
+// ID) came from a different resource service — the caller reports those to the
+// OTLP client as rejected rather than silently replacing another service's
+// step. The raw payload is still stored only when something was accepted, so a
+// batch that was entirely rejected cannot be replayed later by `renormalize`.
+func (s *Store) IngestBatch(ctx context.Context, project string, raw []byte, steps []model.Step) (int, error) {
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
 
+	rejected, err := upsertStepsTx(ctx, tx, steps)
+	if err != nil {
+		return 0, err
+	}
+	if len(steps) > 0 && rejected == len(steps) {
+		// Nothing was written; keep no replayable copy of a refused batch.
+		return rejected, tx.Commit()
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO raw_batches (received_ns, payload, project) VALUES (?, ?, ?)`,
 		time.Now().UnixNano(), raw, project); err != nil {
-		return fmt.Errorf("insert raw batch: %w", err)
+		return 0, fmt.Errorf("insert raw batch: %w", err)
 	}
-	if err := upsertStepsTx(ctx, tx, steps); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return rejected, tx.Commit()
 }
 
 // EachRawBatch streams every stored raw payload to fn in insertion order,

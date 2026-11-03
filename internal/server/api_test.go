@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/otterscope/otterscope/internal/evals"
+	"github.com/otterscope/otterscope/internal/ingest"
 	"github.com/otterscope/otterscope/internal/model"
 	"github.com/otterscope/otterscope/internal/pricing"
 	"github.com/otterscope/otterscope/internal/store"
@@ -25,7 +26,7 @@ func testServer(t *testing.T) (*Server, *store.Store) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, pricing.Default(), evals.Endpoint{}, 0, false, 0, 0, "test"), st
+	return New(st, pricing.Default(), evals.Endpoint{}, 0, false, ingest.Options{}, "", "test"), st
 }
 
 func seedRun(t *testing.T, st *store.Store, id string, startSec int64) {
@@ -51,7 +52,7 @@ func seedRun(t *testing.T, st *store.Store, id string, startSec int64) {
 
 func getRuns(t *testing.T, srv *Server, query string) []runJSON {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/runs"+query, nil)
+	req := newReq(http.MethodGet, "/api/runs"+query, nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -142,7 +143,7 @@ func TestGetRunAPI(t *testing.T) {
 		t.Fatalf("seed detail: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/r1", nil)
+	req := newReq(http.MethodGet, "/api/runs/r1", nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -180,7 +181,7 @@ func TestGetRunAPI(t *testing.T) {
 
 func TestGetRunNotFoundAPI(t *testing.T) {
 	srv, _ := testServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/nope", nil)
+	req := newReq(http.MethodGet, "/api/runs/nope", nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -194,7 +195,7 @@ func TestAssertionsAPI(t *testing.T) {
 
 	// Create two assertions via the API.
 	mkAssert := func(body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/assertions", strings.NewReader(body))
+		req := jsonReq(http.MethodPost, "/api/assertions", body)
 		w := httptest.NewRecorder()
 		srv.uiHandler().ServeHTTP(w, req)
 		return w
@@ -206,8 +207,9 @@ func TestAssertionsAPI(t *testing.T) {
 		t.Fatalf("invalid regex accepted: %d", w.Code)
 	}
 
-	// On-demand evaluation backfills the existing run.
-	req := httptest.NewRequest(http.MethodPost, "/api/assertions/evaluate?project=default", nil)
+	// On-demand evaluation backfills the existing run. The call is bounded by
+	// run id: an unqualified evaluate would sweep the whole project.
+	req := newReq(http.MethodPost, "/api/assertions/evaluate?project=default&run=r1", nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -215,7 +217,7 @@ func TestAssertionsAPI(t *testing.T) {
 	}
 
 	// Results appear on the run detail.
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/r1", nil)
+	req = newReq(http.MethodGet, "/api/runs/r1", nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	var resp struct {
@@ -237,7 +239,7 @@ func TestShareLifecycle(t *testing.T) {
 	seedRun(t, st, "r1", 1000)
 
 	// Mint a share.
-	req := httptest.NewRequest(http.MethodPost, "/api/runs/r1/share", nil)
+	req := newReq(http.MethodPost, "/api/runs/r1/share", nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusCreated {
@@ -250,7 +252,7 @@ func TestShareLifecycle(t *testing.T) {
 	}
 
 	// Public endpoint returns exactly that run, no assertionResults key.
-	req = httptest.NewRequest(http.MethodGet, "/api/shared/"+mint.Token, nil)
+	req = newReq(http.MethodGet, "/api/shared/"+mint.Token, nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -266,7 +268,7 @@ func TestShareLifecycle(t *testing.T) {
 	}
 
 	// It's listed for the run.
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/r1/shares", nil)
+	req = newReq(http.MethodGet, "/api/runs/r1/shares", nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	var list struct {
@@ -278,13 +280,13 @@ func TestShareLifecycle(t *testing.T) {
 	}
 
 	// Revoke → public endpoint 404s.
-	req = httptest.NewRequest(http.MethodDelete, "/api/shares/"+mint.Token, nil)
+	req = newReq(http.MethodDelete, "/api/shares/"+mint.Token, nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("revoke: %d", w.Code)
 	}
-	req = httptest.NewRequest(http.MethodGet, "/api/shared/"+mint.Token, nil)
+	req = newReq(http.MethodGet, "/api/shared/"+mint.Token, nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -294,7 +296,7 @@ func TestShareLifecycle(t *testing.T) {
 
 func TestSharedUnknownToken(t *testing.T) {
 	srv, _ := testServer(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/shared/deadbeef", nil)
+	req := newReq(http.MethodGet, "/api/shared/deadbeef", nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
@@ -307,7 +309,7 @@ func TestSavedViewsAPI(t *testing.T) {
 
 	// Create a view with filter params.
 	body := `{"name":"prod errors","params":{"status":"error","range":"24h","q":"timeout"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/views", strings.NewReader(body))
+	req := jsonReq(http.MethodPost, "/api/views", body)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusCreated {
@@ -324,7 +326,7 @@ func TestSavedViewsAPI(t *testing.T) {
 	}
 
 	// Duplicate name conflicts.
-	req = httptest.NewRequest(http.MethodPost, "/api/views", strings.NewReader(body))
+	req = jsonReq(http.MethodPost, "/api/views", body)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusConflict {
@@ -332,7 +334,7 @@ func TestSavedViewsAPI(t *testing.T) {
 	}
 
 	// List returns it with params as a JSON object.
-	req = httptest.NewRequest(http.MethodGet, "/api/views", nil)
+	req = newReq(http.MethodGet, "/api/views", nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	var list struct {
@@ -348,13 +350,13 @@ func TestSavedViewsAPI(t *testing.T) {
 	}
 
 	// Delete.
-	req = httptest.NewRequest(http.MethodDelete, "/api/views/"+itoa(created.ID), nil)
+	req = newReq(http.MethodDelete, "/api/views/"+itoa(created.ID), nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", w.Code)
 	}
-	req = httptest.NewRequest(http.MethodGet, "/api/views", nil)
+	req = newReq(http.MethodGet, "/api/views", nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	json.Unmarshal(w.Body.Bytes(), &list)
@@ -368,12 +370,12 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 func TestReadAuth(t *testing.T) {
 	_, st := testServer(t)
 	seedRun(t, st, "r1", 1000)
-	authed := New(st, pricing.Default(), evals.Endpoint{}, 0, true, 0, 0, "test")
+	authed := New(st, pricing.Default(), evals.Endpoint{}, 0, true, ingest.Options{}, "", "test")
 	h := authed.authWrap(authed.uiHandler())
 	tok, _ := st.CreateReadToken(context.Background(), "script")
 
 	get := func(path, bearer string) int {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := newReq(http.MethodGet, path, nil)
 		if bearer != "" {
 			req.Header.Set("Authorization", "Bearer "+bearer)
 		}
@@ -406,7 +408,7 @@ func TestReadAuth(t *testing.T) {
 	// Use a short-lived context so the streaming handler returns after auth.
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/stream?token="+tok.Token, nil).WithContext(ctx)
+	req := newReq(http.MethodGet, "/api/stream?token="+tok.Token, nil).WithContext(ctx)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code == http.StatusUnauthorized {
@@ -428,7 +430,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		Start: base, End: base.Add(time.Second),
 	}})
 
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req := newReq(http.MethodGet, "/metrics", nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -454,7 +456,7 @@ func TestRunsCSV(t *testing.T) {
 	seedRun(t, st, "r1", 1000)
 	seedRun(t, st, "r2", 2000)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/runs.csv", nil)
+	req := newReq(http.MethodGet, "/api/runs.csv", nil)
 	w := httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -482,7 +484,7 @@ func TestRunsCSV(t *testing.T) {
 	}
 
 	// Filter applies to the export.
-	req = httptest.NewRequest(http.MethodGet, "/api/runs.csv?status=error", nil)
+	req = newReq(http.MethodGet, "/api/runs.csv?status=error", nil)
 	w = httptest.NewRecorder()
 	srv.uiHandler().ServeHTTP(w, req)
 	rows, _ = csv.NewReader(strings.NewReader(w.Body.String())).ReadAll()

@@ -38,7 +38,7 @@ func judgeAssertion() Assertion {
 }
 
 func endpoint(baseURL string) Endpoint {
-	return Endpoint{BaseURL: baseURL, Key: "sk-test"}
+	return Endpoint{BaseURL: baseURL, Key: "sk-test", Models: []string{"judge-model-1"}}
 }
 
 func judgeRun() (model.Run, []model.Step) {
@@ -116,5 +116,40 @@ func TestJudgeEndpointError(t *testing.T) {
 	res := Judge(context.Background(), endpoint(srv.URL), judgeAssertion(), run, steps)
 	if res.Pass || !strings.Contains(res.Detail, "429") {
 		t.Fatalf("endpoint error must fail with status detail: %+v", res)
+	}
+}
+
+// The assertion names the model, so the allow-list is what keeps a caller
+// from choosing the priciest one the key can reach. The refusal must name
+// both the model and the list — and must not reach the network.
+func TestJudgeRefusesModelOutsideAllowList(t *testing.T) {
+	ep := endpoint("http://unused.invalid")
+	ep.Models = []string{"allowed-model"}
+
+	run, steps := judgeRun()
+	res := Judge(context.Background(), ep, judgeAssertion(), run, steps)
+	if res.Pass {
+		t.Fatalf("disallowed model scored a pass: %+v", res)
+	}
+	if !strings.Contains(res.Detail, "judge-model-1") || !strings.Contains(res.Detail, "allowed-model") {
+		t.Fatalf("refusal must name the model and the allow-list: %q", res.Detail)
+	}
+}
+
+func TestCheckModel(t *testing.T) {
+	ep := Endpoint{Models: []string{"GPT-4o-mini", "o3-mini"}}
+	if !ep.AllowsModel(" gpt-4o-MINI ") {
+		t.Error("allow-list matching must ignore case and surrounding space")
+	}
+	if ep.AllowsModel("gpt-4o") {
+		t.Error("a model not on the list must not match")
+	}
+	// Fail closed: no configured list allows nothing.
+	if (Endpoint{}).AllowsModel("anything") {
+		t.Error("an empty allow-list must allow no model")
+	}
+	if err := (Endpoint{}).CheckModel("anything"); err == nil ||
+		!strings.Contains(err.Error(), "OTTERSCOPE_JUDGE_MODELS") {
+		t.Errorf("empty-list refusal must say how to configure it: %v", err)
 	}
 }

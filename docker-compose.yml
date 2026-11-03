@@ -1,16 +1,45 @@
-# Minimal self-hosted deployment. UI on :8317, OTLP ingest on :4318,
-# data in a named volume.
+# Minimal self-hosted deployment: UI on 127.0.0.1:8317, OTLP ingest on
+# 127.0.0.1:4318, data in a named volume, non-root, read-only root filesystem.
+#
+# The published ports bind the host's loopback address only. Ingest is
+# authenticated per project by its ingest key, but the UI/API is a full
+# read/write surface and 'docker compose up' with bare "8317:8317" would hand
+# every host on the network an unauthenticated view of all traces. For anything
+# wider than this machine, put a reverse proxy with TLS and real auth in front
+# instead of changing these bindings.
 services:
   otterscope:
     image: ghcr.io/otterscope/otterscope:latest
     restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    # The image itself listens on loopback (the binary's defaults). Docker's
+    # port forwarding delivers to the container's own address, so the
+    # container has to bind 0.0.0.0 for the published ports to work at all;
+    # the 127.0.0.1 bindings above are what keep it off the network.
+    command:
+      - serve
+      - -db
+      - /data/otterscope.db
+      - -listen
+      - 0.0.0.0:8317
+      - -otlp
+      - 0.0.0.0:4318
+      - -read-auth
     ports:
-      - "8317:8317"
-      - "4318:4318"
+      - "127.0.0.1:8317:8317"
+      - "127.0.0.1:4318:4318"
     volumes:
       - otterscope-data:/data
-    # Optional flags, e.g. retention or pricing overrides:
-    # command: ["serve", "-db", "/data/otterscope.db", "-retention", "2160h"]
+    # First read token (required to open the UI/API; the UI prompts for it):
+    #   docker compose run --rm otterscope token add local -db /data/otterscope.db
+    # It runs against the same volume and prints the token once; paste that
+    # into the UI prompt, or send it as "Authorization: Bearer <token>".
+    # Per-project ingest keys for agents come from:
+    #   docker compose run --rm otterscope project add my-agent
 
 volumes:
   otterscope-data:

@@ -20,6 +20,9 @@ func Validate(r store.Rule) error {
 	if r.WebhookURL == "" {
 		return fmt.Errorf("alert needs a webhook URL")
 	}
+	if err := ValidateWebhookURL(r.WebhookURL); err != nil {
+		return err
+	}
 	if r.WindowSecs <= 0 {
 		return fmt.Errorf("windowSecs must be positive")
 	}

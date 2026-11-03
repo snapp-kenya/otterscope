@@ -46,6 +46,7 @@ func newSettleHarness(t *testing.T, settleSecs int64) *settleHarness {
 		set: map[int64]bool{},
 	}
 	h.w = NewWatcher(h.fs, time.Hour)
+	allowLoopbackWebhooks(h.w)
 	h.w.now = func() time.Time { return h.now }
 	return h
 }
@@ -203,7 +204,7 @@ func TestFlapResetsTheSettleTimer(t *testing.T) {
 func TestValidateSettleSecs(t *testing.T) {
 	base := store.Rule{
 		Name: "n", Type: "error_rate", Threshold: 0.5,
-		WindowSecs: 3600, WebhookURL: "https://example.invalid/hook",
+		WindowSecs: 3600, WebhookURL: "https://93.184.216.34/hook",
 	}
 	ok := func(secs int64) store.Rule { r := base; r.SettleSecs = secs; return r }
 

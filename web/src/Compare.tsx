@@ -1,5 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fmtCost, fmtDuration, fmtTokens, apiFetch } from "./api";
+import { withBase } from "./base";
+
+// Long enough that a fast typist sends one request per field rather than one
+// per keystroke, short enough that the numbers still feel live.
+const DEBOUNCE_MS = 250;
 
 type AssertionRate = {
   assertionId: number;
@@ -63,7 +68,8 @@ function syncURL(a: Side, b: Side) {
     for (const [k, v] of Object.entries(side)) if (v) q.set(`${prefix}_${k}`, v);
   }
   const qs = q.toString();
-  window.history.replaceState(null, "", qs ? `/compare?${qs}` : "/compare");
+  const path = withBase("/compare");
+  window.history.replaceState(null, "", qs ? `${path}?${qs}` : path);
 }
 
 function SideForm({
@@ -115,17 +121,33 @@ export default function Compare() {
   const [b, setB] = useState<Side>(() => sideFromURL("b"));
   const [statsA, setStatsA] = useState<Stats | null>(null);
   const [statsB, setStatsB] = useState<Stats | null>(null);
+  // Monotonic request generation. Aborting the previous fetch is not enough
+  // on its own: a response already on the wire can still resolve after the
+  // abort, and if it lands last it paints numbers for a query the inputs no
+  // longer hold. Only the newest generation is allowed to set state.
+  const seq = useRef(0);
 
   useEffect(() => {
     syncURL(a, b);
-    apiFetch(`/api/stats?${sideQuery(a)}`)
-      .then((r) => r.json())
-      .then(setStatsA)
-      .catch(() => {});
-    apiFetch(`/api/stats?${sideQuery(b)}`)
-      .then((r) => r.json())
-      .then(setStatsB)
-      .catch(() => {});
+    const mine = ++seq.current;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      const load = (side: Side, apply: (s: Stats) => void) =>
+        apiFetch(withBase(`/api/stats?${sideQuery(side)}`), {
+          signal: ctrl.signal,
+        })
+          .then((r) => r.json())
+          .then((s) => {
+            if (mine === seq.current) apply(s);
+          })
+          .catch(() => {});
+      load(a, setStatsA);
+      load(b, setStatsB);
+    }, DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
   }, [a, b]);
 
   const rows: [string, (s: Stats) => string][] = [

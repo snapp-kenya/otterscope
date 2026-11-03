@@ -40,7 +40,11 @@ type Watcher struct {
 	st       Store
 	interval time.Duration
 	client   *http.Client
-	now      func() time.Time
+	// checkWebhook gates every POST. It is a field so tests that must fire at a
+	// loopback httptest server can opt out; NewWatcher always wires the real
+	// address check.
+	checkWebhook func(ctx context.Context, raw string) error
+	now          func() time.Time
 	// ctx bounds every evaluation cycle and the webhook POSTs inside it, so
 	// Stop cancels in-flight work instead of waiting on a hung endpoint.
 	ctx    context.Context
@@ -52,12 +56,13 @@ type Watcher struct {
 func NewWatcher(st Store, interval time.Duration) *Watcher {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Watcher{
-		st:       st,
-		interval: interval,
-		client:   &http.Client{Timeout: 10 * time.Second},
-		now:      time.Now,
-		ctx:      ctx,
-		cancel:   cancel,
+		st:           st,
+		interval:     interval,
+		client:       newWebhookClient(),
+		checkWebhook: validateWebhook,
+		now:          time.Now,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -204,6 +209,13 @@ func (w *Watcher) EvaluateOnce(ctx context.Context) { w.evaluateOnce(ctx) }
 // notify POSTs the webhook under ctx, so a hung endpoint cannot outlive the
 // evaluation cycle (and therefore cannot stall shutdown past it).
 func (w *Watcher) notify(ctx context.Context, r store.Rule, status, detail string) {
+	// Re-check at use: a rule can predate this guard, or its host can have been
+	// re-pointed since creation. Refusing here is a log line, not an alert
+	// failure, so one bad rule cannot stall the others in the cycle.
+	if err := w.checkWebhook(ctx, r.WebhookURL); err != nil {
+		slog.Error("alerts: refusing webhook URL", "alert", r.Name, "err", err)
+		return
+	}
 	n := Notification{
 		Alert:   r.Name,
 		Project: r.Project,

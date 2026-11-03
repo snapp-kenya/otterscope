@@ -12,39 +12,68 @@ import (
 )
 
 // UpsertSteps writes a batch of steps and re-derives the aggregates of every
-// touched run, all in one transaction. Steps are keyed by span ID, so
-// re-delivered OTLP batches are naturally idempotent.
+// touched run, all in one transaction. Steps are keyed by (project, span ID),
+// so re-delivered OTLP batches are naturally idempotent.
 func (s *Store) UpsertSteps(ctx context.Context, steps []model.Step) error {
+	_, err := s.upsertSteps(ctx, steps)
+	return err
+}
+
+// upsertSteps is UpsertSteps plus the count of steps refused because the row
+// already stored under that (project, span ID) belongs to another service.
+func (s *Store) upsertSteps(ctx context.Context, steps []model.Step) (int, error) {
 	if len(steps) == 0 {
-		return nil
+		return 0, nil
 	}
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback()
-	if err := upsertStepsTx(ctx, tx, steps); err != nil {
-		return err
+	rejected, err := upsertStepsTx(ctx, tx, steps)
+	if err != nil {
+		return 0, err
 	}
-	return tx.Commit()
+	return rejected, tx.Commit()
 }
 
 // upsertStepsTx is the transactional body of UpsertSteps, shared with
-// IngestBatch.
-func upsertStepsTx(ctx context.Context, tx *sql.Tx, steps []model.Step) error {
+// IngestBatch. It returns the number of steps it refused to write.
+//
+// Overwriting an existing (project, span ID) is only allowed when the incoming
+// step names exactly the same resource service as the stored one: a span ID is
+// not a capability, so an OTLP sender must not be able to rewrite a step that
+// some other service emitted — including its kind, name and message text,
+// which downstream agents read. A mismatch writes nothing at all (no fallback
+// to the stored row's fields) and is counted as rejected.
+func upsertStepsTx(ctx context.Context, tx *sql.Tx, steps []model.Step) (int, error) {
 	if len(steps) == 0 {
-		return nil
+		return 0, nil
 	}
 	ins, err := tx.PrepareContext(ctx, `
-		INSERT OR REPLACE INTO steps
+		INSERT INTO steps
 		(id, run_id, parent_id, kind, name, project, service, agent_name, status,
 		 start_ns, end_ns, error,
 		 provider, request_model, response_model, input_tokens, output_tokens,
 		 cache_read_tokens, cache_creation_tokens, reasoning_tokens,
 		 tool_name, tool_call_id, detail, cost_usd, prompt)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(project, id) DO UPDATE SET
+		 run_id=excluded.run_id, parent_id=excluded.parent_id,
+		 kind=excluded.kind, name=excluded.name, service=excluded.service,
+		 agent_name=excluded.agent_name, status=excluded.status,
+		 start_ns=excluded.start_ns, end_ns=excluded.end_ns, error=excluded.error,
+		 provider=excluded.provider, request_model=excluded.request_model,
+		 response_model=excluded.response_model, input_tokens=excluded.input_tokens,
+		 output_tokens=excluded.output_tokens,
+		 cache_read_tokens=excluded.cache_read_tokens,
+		 cache_creation_tokens=excluded.cache_creation_tokens,
+		 reasoning_tokens=excluded.reasoning_tokens,
+		 tool_name=excluded.tool_name, tool_call_id=excluded.tool_call_id,
+		 detail=excluded.detail, cost_usd=excluded.cost_usd, prompt=excluded.prompt
+		WHERE steps.service = excluded.service`)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer ins.Close()
 
@@ -52,19 +81,21 @@ func upsertStepsTx(ctx context.Context, tx *sql.Tx, steps []model.Step) error {
 	// re-delivery) then insert the searchable content.
 	ftsDel, err := tx.PrepareContext(ctx, `DELETE FROM steps_fts WHERE project = ? AND step_id = ?`)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer ftsDel.Close()
 	ftsIns, err := tx.PrepareContext(ctx,
 		`INSERT INTO steps_fts (project, run_id, step_id, content) VALUES (?,?,?,?)`)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer ftsIns.Close()
 
-	// Runs are keyed by (project, run_id) — re-derive each touched pair.
-	type runKey struct{ project, runID string }
-	runKeys := make(map[runKey]bool)
+	// Runs are keyed by (project, run_id); collect the distinct pairs a write
+	// actually touched and re-derive them together in rederiveRuns.
+	var runKeys []runKey
+	seen := make(map[runKey]bool)
+	rejected := 0
 	for _, st := range steps {
 		if st.Project == "" {
 			st.Project = "default"
@@ -77,72 +108,134 @@ func upsertStepsTx(ctx context.Context, tx *sql.Tx, steps []model.Step) error {
 		if st.Tool != nil {
 			tool = *st.Tool
 		}
-		if _, err := ins.ExecContext(ctx,
+		res, err := ins.ExecContext(ctx,
 			st.ID, st.RunID, st.ParentID, string(st.Kind), st.Name, st.Project, st.Service, st.AgentName, string(st.Status),
 			st.Start.UnixNano(), st.End.UnixNano(), st.Error,
 			llm.Provider, llm.RequestModel, llm.ResponseModel, llm.InputTokens, llm.OutputTokens,
 			llm.CacheReadTokens, llm.CacheCreationTokens, llm.ReasoningTokens,
 			tool.Name, tool.CallID, marshalDetail(st), nullableFloat(llm.CostUSD), llm.Prompt,
-		); err != nil {
-			return fmt.Errorf("insert step %s: %w", st.ID, err)
+		)
+		if err != nil {
+			return 0, fmt.Errorf("insert step %s: %w", st.ID, err)
+		}
+		// The guarded upsert writes nothing when the stored row belongs to
+		// another service; sqlite reports that as zero affected rows.
+		if n, err := res.RowsAffected(); err != nil {
+			return 0, fmt.Errorf("insert step %s: %w", st.ID, err)
+		} else if n == 0 {
+			rejected++
+			continue
 		}
 		if _, err := ftsDel.ExecContext(ctx, st.Project, st.ID); err != nil {
-			return fmt.Errorf("fts delete %s: %w", st.ID, err)
+			return 0, fmt.Errorf("fts delete %s: %w", st.ID, err)
 		}
 		if _, err := ftsIns.ExecContext(ctx, st.Project, st.RunID, st.ID, ftsContent(st)); err != nil {
-			return fmt.Errorf("fts insert %s: %w", st.ID, err)
+			return 0, fmt.Errorf("fts insert %s: %w", st.ID, err)
 		}
-		runKeys[runKey{st.Project, st.RunID}] = true
+		k := runKey{st.Project, st.RunID}
+		if !seen[k] {
+			seen[k] = true
+			runKeys = append(runKeys, k)
+		}
 	}
 
-	for k := range runKeys {
-		if err := rederiveRun(ctx, tx, k.project, k.runID); err != nil {
-			return fmt.Errorf("rederive run %s/%s: %w", k.project, k.runID, err)
-		}
+	if err := rederiveRuns(ctx, tx, runKeys); err != nil {
+		return 0, err
 	}
-	return nil
+	return rejected, nil
 }
 
-// rederiveRun recomputes a run row entirely from its steps within one
-// project, making run aggregates structurally idempotent instead of
-// bookkept. Scoping by project prevents one project's steps from being
-// merged into another's run (audit #49).
-func rederiveRun(ctx context.Context, tx *sql.Tx, project, runID string) error {
-	var (
-		startNS, endNS                        int64
-		inTok, outTok                         int64
-		llmCalls, toolCalls                   int64
-		hasError, hasRoot, partial            bool
-		service, agent, oerr, models, prompts string
-		cost                                  sql.NullFloat64
-	)
-	err := tx.QueryRowContext(ctx, `
-		SELECT min(start_ns), max(end_ns),
-		       sum(input_tokens), sum(output_tokens),
-		       sum(kind = 'llm'), sum(kind = 'tool'),
-		       max(error != ''), max(parent_id = ''),
-		       coalesce((SELECT service FROM steps WHERE project = ?1 AND run_id = ?2 AND service != '' LIMIT 1), ''),
-		       coalesce((SELECT agent_name FROM steps WHERE project = ?1 AND run_id = ?2 AND agent_name != '' LIMIT 1), ''),
-		       coalesce((SELECT error FROM steps WHERE project = ?1 AND run_id = ?2 AND error != '' ORDER BY start_ns LIMIT 1), ''),
-		       coalesce((SELECT group_concat(DISTINCT request_model) FROM steps WHERE project = ?1 AND run_id = ?2 AND request_model != ''), ''),
-		       coalesce((SELECT group_concat(DISTINCT prompt) FROM steps WHERE project = ?1 AND run_id = ?2 AND prompt != ''), ''),
-		       sum(cost_usd),
-		       max(kind = 'llm' AND cost_usd IS NULL AND (input_tokens > 0 OR output_tokens > 0))
-		FROM steps WHERE project = ?1 AND run_id = ?2`, project, runID).
-		Scan(&startNS, &endNS, &inTok, &outTok, &llmCalls, &toolCalls, &hasError, &hasRoot, &service, &agent, &oerr, &models, &prompts, &cost, &partial)
+// runKey identifies a run within a project.
+type runKey struct{ project, runID string }
+
+// rederiveRuns recomputes run rows entirely from their steps, making run
+// aggregates structurally idempotent instead of bookkept. Scoping by project
+// prevents one project's steps from being merged into another's run (#49).
+//
+// Every touched run is re-derived by ONE grouped query rather than one
+// aggregate query per run: a batch of N distinct trace IDs used to cost N*7
+// statements, which let a single request monopolise the sole SQLite writer.
+func rederiveRuns(ctx context.Context, tx *sql.Tx, keys []runKey) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	// A temp table keeps the GROUP BY bounded by the touched runs without
+	// splatting thousands of parameters into the statement.
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TEMP TABLE IF NOT EXISTS touched_runs (
+			project TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY (project, run_id))`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM touched_runs`); err != nil {
+		return err
+	}
+	touch, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO touched_runs (project, run_id) VALUES (?, ?)`)
 	if err != nil {
 		return err
 	}
-
-	status := model.StatusRunning
-	switch {
-	case hasError:
-		status = model.StatusError
-	case hasRoot:
-		status = model.StatusOK
+	for _, k := range keys {
+		if _, err := touch.ExecContext(ctx, k.project, k.runID); err != nil {
+			touch.Close()
+			return err
+		}
 	}
+	touch.Close()
 
-	_, err = tx.ExecContext(ctx, `
+	type derivedRun struct {
+		project, runID                           string
+		service, agent, errText, models, prompts string
+		startNS, endNS                           int64
+		inTok, outTok, llmCalls, toolCalls       int64
+		hasError, hasRoot, partial               int64
+		cost                                     sql.NullFloat64
+	}
+	// Rows are drained before any write: the writer is a single connection, so
+	// a cursor held open across an Exec would wait on itself.
+	var derived []derivedRun
+	rows, err := tx.QueryContext(ctx, `
+		SELECT t.project, t.run_id,
+		       min(s.start_ns), max(s.end_ns),
+		       sum(s.input_tokens), sum(s.output_tokens),
+		       sum(s.kind = 'llm'), sum(s.kind = 'tool'),
+		       max(s.error != ''), max(s.parent_id = ''),
+		       coalesce((SELECT x.service FROM steps x
+		                  WHERE x.project = t.project AND x.run_id = t.run_id AND x.service != ''
+		                  ORDER BY x.start_ns LIMIT 1), ''),
+		       coalesce((SELECT x.agent_name FROM steps x
+		                  WHERE x.project = t.project AND x.run_id = t.run_id AND x.agent_name != ''
+		                  ORDER BY x.start_ns LIMIT 1), ''),
+		       coalesce((SELECT x.error FROM steps x
+		                  WHERE x.project = t.project AND x.run_id = t.run_id AND x.error != ''
+		                  ORDER BY x.start_ns LIMIT 1), ''),
+		       coalesce(group_concat(DISTINCT CASE WHEN s.request_model != '' THEN s.request_model END), ''),
+		       coalesce(group_concat(DISTINCT CASE WHEN s.prompt != '' THEN s.prompt END), ''),
+		       sum(s.cost_usd),
+		       max(s.kind = 'llm' AND s.cost_usd IS NULL AND (s.input_tokens > 0 OR s.output_tokens > 0))
+		FROM touched_runs t
+		JOIN steps s ON s.project = t.project AND s.run_id = t.run_id
+		GROUP BY t.project, t.run_id`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var d derivedRun
+		if err := rows.Scan(&d.project, &d.runID, &d.startNS, &d.endNS,
+			&d.inTok, &d.outTok, &d.llmCalls, &d.toolCalls,
+			&d.hasError, &d.hasRoot,
+			&d.service, &d.agent, &d.errText, &d.models, &d.prompts,
+			&d.cost, &d.partial); err != nil {
+			rows.Close()
+			return err
+		}
+		derived = append(derived, d)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	upsert, err := tx.PrepareContext(ctx, `
 		INSERT INTO runs (project, id, service, agent_name, status, start_ns, end_ns,
 		                  input_tokens, output_tokens, llm_calls, tool_calls, models, prompts,
 		                  cost_usd, cost_partial, error)
@@ -153,10 +246,27 @@ func rederiveRun(ctx context.Context, tx *sql.Tx, project, runID string) error {
 		  input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens,
 		  llm_calls=excluded.llm_calls, tool_calls=excluded.tool_calls,
 		  models=excluded.models, prompts=excluded.prompts, cost_usd=excluded.cost_usd,
-		  cost_partial=excluded.cost_partial, error=excluded.error`,
-		project, runID, service, agent, string(status), startNS, endNS,
-		inTok, outTok, llmCalls, toolCalls, models, prompts, cost, partial, oerr)
-	return err
+		  cost_partial=excluded.cost_partial, error=excluded.error`)
+	if err != nil {
+		return err
+	}
+	defer upsert.Close()
+	for _, d := range derived {
+		status := model.StatusRunning
+		switch {
+		case d.hasError != 0:
+			status = model.StatusError
+		case d.hasRoot != 0:
+			status = model.StatusOK
+		}
+		if _, err := upsert.ExecContext(ctx,
+			d.project, d.runID, d.service, d.agent, string(status), d.startNS, d.endNS,
+			d.inTok, d.outTok, d.llmCalls, d.toolCalls, d.models, d.prompts,
+			d.cost, d.partial != 0, d.errText); err != nil {
+			return fmt.Errorf("rederive run %s/%s: %w", d.project, d.runID, err)
+		}
+	}
+	return nil
 }
 
 // nullableFloat converts *float64 to a driver-friendly NULL-able value.
@@ -220,6 +330,17 @@ func (s *Store) ListRuns(ctx context.Context, f Filter, limit, offset int) ([]mo
 		runs = append(runs, r)
 	}
 	return runs, rows.Err()
+}
+
+// CountRuns returns how many runs match f, ignoring paging. Callers that cap
+// their work use it to report exactly how much a cap left undone — "at least
+// one left over" is not a number anyone can act on.
+func (s *Store) CountRuns(ctx context.Context, f Filter) (int, error) {
+	where, args := filterWhere(f)
+	var n int
+	err := s.reader.QueryRowContext(ctx,
+		`SELECT count(*) FROM runs`+where, args...).Scan(&n)
+	return n, err
 }
 
 // escapeLike neutralizes LIKE wildcards in user input.

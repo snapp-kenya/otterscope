@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type RunDetail as Detail } from "./api";
+import { withBase } from "./base";
 import RunView from "./RunView";
 
 // SharedRun is the public, standalone view behind a share token — no nav, no
@@ -9,7 +10,7 @@ export default function SharedRun({ token }: { token: string }) {
   const [missing, setMissing] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/shared/${token}`)
+    fetch(withBase(`/api/shared/${token}`))
       .then((r) => {
         if (!r.ok) {
           setMissing(true);

@@ -7,6 +7,7 @@ import {
   type RunDetail as Detail,
   type Step,
 } from "./api";
+import { barPct } from "./timeline";
 
 // depth by walking parent links; unknown parents count as roots so partial
 // traces still render.
@@ -27,7 +28,6 @@ export default function RunView({ detail }: { detail: Detail }) {
   const [selected, setSelected] = useState<string | null>(null);
   const { run, steps } = detail;
   const byId = useMemo(() => new Map(steps.map((s) => [s.id, s])), [steps]);
-  const total = Math.max(run.durationMs, 1);
   const sel = selected ? (byId.get(selected) ?? null) : null;
 
   return (
@@ -64,32 +64,32 @@ export default function RunView({ detail }: { detail: Detail }) {
       )}
 
       <div className="timeline">
-        {steps.map((s) => (
-          <div
-            key={s.id}
-            className={`step ${selected === s.id ? "selected" : ""}`}
-            onClick={() => setSelected(selected === s.id ? null : s.id)}
-          >
-            <span
-              className="step-name"
-              style={{ paddingLeft: `${depthOf(s, byId) * 1.2}rem` }}
+        {steps.map((s) => {
+          const bar = barPct(s.offsetMs, s.durationMs, run.durationMs);
+          return (
+            <div
+              key={s.id}
+              className={`step ${selected === s.id ? "selected" : ""}`}
+              onClick={() => setSelected(selected === s.id ? null : s.id)}
             >
-              <span className={`kind ${s.kind}`}>{s.kind}</span>
-              {s.name}
-              {s.status === "error" && <span className="badge error">!</span>}
-            </span>
-            <span className="step-duration">{fmtDuration(s.durationMs)}</span>
-            <span className="bar-track">
               <span
-                className={`bar ${s.kind}`}
-                style={{
-                  left: `${(s.offsetMs / total) * 100}%`,
-                  width: `${Math.max((s.durationMs / total) * 100, 0.5)}%`,
-                }}
-              />
-            </span>
-          </div>
-        ))}
+                className="step-name"
+                style={{ paddingLeft: `${depthOf(s, byId) * 1.2}rem` }}
+              >
+                <span className={`kind ${s.kind}`}>{s.kind}</span>
+                {s.name}
+                {s.status === "error" && <span className="badge error">!</span>}
+              </span>
+              <span className="step-duration">{fmtDuration(s.durationMs)}</span>
+              <span className="bar-track">
+                <span
+                  className={`bar ${s.kind}`}
+                  style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
+                />
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {sel && (

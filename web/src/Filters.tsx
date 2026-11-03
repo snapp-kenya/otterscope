@@ -1,4 +1,4 @@
-import { type FilterState } from "./filters";
+import { type FilterState } from "./filterState";
 
 // Controlled: the parent owns the filter state so saved views can drive it.
 export default function Filters({

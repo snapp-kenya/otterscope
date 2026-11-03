@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   apiFetch,
   csvTruncationNotice,
+  failureMessage,
   fmtCost,
   fmtDuration,
   fmtStart,
   fmtTokens,
   readToken,
+  transportMessage,
 } from "./api";
 
 afterEach(() => {
@@ -105,6 +107,44 @@ describe("csvTruncationNotice", () => {
     const notice = csvTruncationNotice(res({ "X-Otterscope-Truncated": "true" }));
     expect(notice).not.toBeNull();
     expect(notice).not.toContain("null");
+  });
+});
+
+describe("failureMessage", () => {
+  // The views used to swallow the rejection and keep "loading…" on screen, so
+  // these messages are what the reader gets instead of a spinner.
+  it("shows the server's own error next to the status", async () => {
+    const res = new Response(JSON.stringify({ error: "query failed" }), {
+      status: 500,
+    });
+    const msg = await failureMessage(res);
+    expect(msg).toContain("500");
+    expect(msg).toContain("query failed");
+  });
+
+  it("falls back to the status alone for a non-JSON body", async () => {
+    const res = new Response("<html>bad gateway</html>", { status: 502 });
+    expect(await failureMessage(res)).toContain("502");
+  });
+
+  it("handles an empty error body without inventing detail", async () => {
+    const res = new Response("", { status: 401 });
+    const msg = await failureMessage(res);
+    expect(msg).toContain("401");
+    expect(msg).not.toContain("undefined");
+    expect(msg).not.toContain("null");
+  });
+});
+
+describe("transportMessage", () => {
+  it("names the browser's reason for a failed fetch", () => {
+    const msg = transportMessage(new TypeError("Failed to fetch"));
+    expect(msg).toMatch(/could not reach the server/i);
+    expect(msg).toContain("Failed to fetch");
+  });
+
+  it("still says something for a rejection with no message", () => {
+    expect(transportMessage(undefined)).toMatch(/could not reach the server/i);
   });
 });
 

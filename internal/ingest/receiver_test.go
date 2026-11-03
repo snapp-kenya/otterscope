@@ -33,15 +33,16 @@ type countSink struct {
 	spans       atomic.Int64
 	lastProject atomic.Pointer[string]
 	err         error
+	res         Result
 }
 
-func (s *countSink) ConsumeTraces(_ context.Context, project string, td ptrace.Traces) error {
+func (s *countSink) ConsumeTraces(_ context.Context, project string, td ptrace.Traces) (Result, error) {
 	if s.err != nil {
-		return s.err
+		return Result{}, s.err
 	}
 	s.lastProject.Store(&project)
 	s.spans.Add(int64(td.SpanCount()))
-	return nil
+	return s.res, nil
 }
 
 func fixture(t *testing.T, name string) []byte {
