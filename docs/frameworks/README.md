@@ -6,9 +6,15 @@ common frameworks. In every case the core is the same two variables:
 
 ```sh
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-# only when you created a project key:
+# required when the server runs -read-auth; otherwise only if you created a
+# project key:
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <ingest-key>"
 ```
+
+Under `-base-path /otterscope`, point the exporter at
+`http://localhost:4318/otterscope` — OTLP/HTTP appends `/v1/traces` itself.
+One batch may carry at most 10,000 spans and 1,000 distinct traces; a larger
+one is refused whole. See [generic-otlp.md](generic-otlp.md#limits).
 
 | Framework | Guide | Dialect Otterscope normalizes |
 |---|---|---|

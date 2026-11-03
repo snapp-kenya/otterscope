@@ -50,11 +50,29 @@ If you ticked the Docker Marketplace image when creating the Droplet, or just
 `apt install docker.io`, it's one command:
 
 ```sh
-docker run -d --restart unless-stopped \
+docker run -d --restart unless-stopped --read-only \
   -p 8317:8317 -p 4318:4318 \
   -v otterscope:/data \
-  ghcr.io/otterscope/otterscope
+  ghcr.io/otterscope/otterscope \
+  serve -db /data/otterscope.db -listen 0.0.0.0:8317 -otlp 0.0.0.0:4318 \
+  -read-auth
 ```
+
+The image is non-root (uid 65532, scratch base) and listens on loopback by
+default, so on a public host you pass `-listen`/`-otlp` yourself (as above).
+`-read-auth` makes the UI and API ask for a token; mint the first token and a
+per-agent ingest key against the same volume:
+
+```sh
+docker run --rm -v otterscope:/data --entrypoint /otterscope \
+  ghcr.io/otterscope/otterscope token add local -db /data/otterscope.db
+docker run --rm -v otterscope:/data --entrypoint /otterscope \
+  ghcr.io/otterscope/otterscope project add my-agent
+```
+
+The token is shown only now (the database keeps its digest); the project key
+stays visible in `project list`. Add `-admin` to `token add` if that token
+should also create alerts, assertions or views.
 
 `8317` is the web UI, `4318` is the standard OTLP ingest port your agents send
 to. The `otterscope` volume keeps your data across restarts.
@@ -80,7 +98,7 @@ After=network.target
 User=otterscope
 # -listen/-otlp are set explicitly here because Otterscope binds to
 # localhost by default (see the security note below)
-ExecStart=/usr/local/bin/otterscope serve -db /var/lib/otterscope/otterscope.db -listen :8317 -otlp :4318
+ExecStart=/usr/local/bin/otterscope serve -db /var/lib/otterscope/otterscope.db -listen :8317 -otlp :4318 -read-auth
 Restart=on-failure
 
 [Install]
@@ -89,7 +107,14 @@ WantedBy=multi-user.target
 
 ```sh
 sudo systemctl enable --now otterscope
+sudo -u otterscope otterscope token add local -db /var/lib/otterscope/otterscope.db
 ```
+
+The `token add` command prints the token once (only its digest is stored), so
+paste it into the UI prompt or send it as `Authorization: Bearer <token>`. Add
+`-admin` to that command for a token that can also create alerts, assertions
+and views. With read auth on, agents need a project key too:
+`sudo -u otterscope otterscope project add my-agent -db /var/lib/otterscope/otterscope.db`.
 
 ### One security note worth reading
 
@@ -102,9 +127,11 @@ internet until you decide to. On a Droplet you have two sane choices:
    `http://localhost:8317`. Nothing is public, ever.
 2. **Expose it deliberately:** pass `-listen :8317 -otlp :4318` (as the unit
    above does), and put a DigitalOcean **Cloud Firewall** in front so only
-   your app servers can reach `4318` and only you can reach `8317`. Otterscope
-   is single-user and has no login yet, so don't leave `8317` open to the
-   world.
+   your app servers can reach `4318` and only you can reach `8317`. Run with
+   `-read-auth` and mint a token (above): Otterscope has token auth but no
+   user accounts, so a token is the only thing standing between the internet
+   and every trace you have. If you serve it on a hostname, also list that
+   origin in `OTTERSCOPE_ALLOWED_ORIGINS` or the API will refuse the browser.
 
 ## Point an agent at it
 
@@ -113,9 +140,12 @@ the Vercel AI SDK — it's the standard OpenTelemetry variable:
 
 ```sh
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://YOUR_DROPLET_IP:4318
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <project-ingest-key>"
 ```
 
-Run your agent, refresh the UI, and the run shows up in a couple of seconds.
+The header is required when `-read-auth` is on (the `project add` command above
+prints the key). Run your agent, refresh the UI, and the run shows up in a
+couple of seconds.
 No SDK to install, no code changes if you're already emitting OTel.
 
 Want to see it populated before wiring a real agent? `otterscope sample`
@@ -125,7 +155,8 @@ seeds a batch of realistic demo runs.
 
 - **$6/mo** Droplet, and honestly a $4 one would do for light use.
 - **Zero** managed-database cost — it's a file on the Droplet's disk. Snapshot
-  the Droplet or `scp` the `.db` file and that's your backup.
+  the Droplet, or run `otterscope backup -o snapshot.db` for a consistent
+  copy (a plain `scp` of a live database can miss the WAL).
 - Unlimited retention by default (it's your disk); there's a `-retention` flag
   if you'd rather prune.
 

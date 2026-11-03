@@ -20,7 +20,8 @@ your prompts to a SaaS — I built Otterscope for exactly that.
   compare view.
 - **Retention:** unlimited by default (it's your disk); optional
   `-retention` sweep if you want cleanup.
-- **Ops:** Prometheus metrics at `/metrics`, alert rules with webhooks
+- **Ops:** Prometheus metrics at `/metrics` (behind the read token when
+  auth is on), read/admin API tokens for scripting, alert rules with webhooks
   (Slack/Discord auto-formatted), an audit log of every mutation, and
   `otterscope backup` for a consistent snapshot.
 - Apache-2.0, no paid tier and no hosted version. Multi-project ingest

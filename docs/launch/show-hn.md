@@ -27,7 +27,8 @@ Design choices that might interest HN:
 - Costs come from a maintained pricing table; unknown models show tokens
   and an explicit "partial" flag rather than a fabricated total.
 - Judge evals call any OpenAI-compatible endpoint with a key from your
-  env — keys never touch the database.
+  env — keys never touch the database, and only models on the server's
+  allow-list can be billed.
 - It exposes its own data over MCP, so an agent can query its own traces:
   "why did my last run fail" answered from the tool that recorded it.
 - Alerts on error rate, cost, or latency POST to a webhook, with a settle

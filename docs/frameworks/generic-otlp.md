@@ -26,3 +26,17 @@ Rules of thumb:
   improvements — instrument now, benefit later. After upgrading, run
   `otterscope renormalize` to backfill existing data (safe to repeat;
   for large stores prefer running it while `serve` is stopped).
+
+## Limits
+
+- One request may carry at most 10,000 spans and touch at most 1,000 distinct
+  trace ids (`-ingest-max-spans`, `-ingest-max-trace-ids`). Over either cap
+  the whole batch is refused with a 400 before normalization, so retrying
+  with a smaller batch costs nothing.
+- One ingest key may send 50 batches a second with a burst of 100 by default
+  (`-ingest-rate`, `-ingest-burst`; 0 turns the limit off).
+- With `-read-auth` on, every request needs a project ingest key — the
+  keyless `default` project is closed.
+- A span id that already exists under a different service is rejected and
+  counted in `partialSuccess.rejectedSpans`. It cannot overwrite another
+  service's step; check which service owns the id before retrying.
