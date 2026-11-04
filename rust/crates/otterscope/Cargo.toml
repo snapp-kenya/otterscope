@@ -1,0 +1,30 @@
+[package]
+name = "otterscope"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lightweight, self-hosted observability and evals for AI agents"
+
+[[bin]]
+name = "otterscope"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+flate2.workspace = true
+mime_guess.workspace = true
+prost.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

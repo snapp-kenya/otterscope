@@ -17,3 +17,9 @@ web/dist/*
 .idea/
 .vscode/
 .DS_Store
+
+# rust port
+rust/target/
+.worktrees/
+web/dist/
+web/node_modules/
