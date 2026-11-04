@@ -128,7 +128,7 @@ Otterscope is Apache-2.0, installs in one command, and is built for individuals 
 
 ## Install
 
-- **Binaries** — [Releases](https://github.com/otterscope/otterscope/releases) (Linux amd64/arm64, macOS arm64, Windows amd64). The Linux builds link
+- **Binaries** — [Releases](https://github.com/otterscope/otterscope/releases) (Linux amd64/arm64, macOS arm64, Windows amd64). The Linux binaries link
   glibc 2.39+, so Docker is the portable option.
 - **Docker** — `ghcr.io/otterscope/otterscope`
 - **From source** — Bun + Rust; see [Development](#development)
@@ -150,11 +150,12 @@ run while the UI page says it was built without one. The binary lands at
 `rust/target/release/otterscope` — run it as `./target/release/otterscope`
 from `rust/`, or as `rust/target/release/otterscope` from the repository root.
 
-The binary is still single and static-feeling: SQLite is compiled in
-(`rusqlite` with the `bundled` feature) and the UI is embedded with
-`rust-embed`, so there is no database server, asset directory or sidecar to
-deploy. It links the platform C runtime, so "static" means one file to deploy,
-not a promise of a fully static musl build.
+The binary is a single deployable file, not a fully static one: SQLite is
+compiled in (`rusqlite` with the `bundled` feature) and the UI is embedded
+with `rust-embed`, so there is no database server, asset directory or sidecar
+to deploy. SQLite comes from C, and the Linux release binaries link glibc
+2.39+ (Docker is the portable option), so "single binary" is the promise —
+not "fully static".
 
 Databases are still plain SQLite and keep the same schema and append-only
 migrations, so an existing database opens without a conversion step. The two

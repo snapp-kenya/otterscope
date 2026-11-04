@@ -1,16 +1,15 @@
 # Benchmarks
 
-> **Go-era reference numbers.** The measurements below were taken on the
-> original Go implementation. There is no Rust benchmark harness yet, so they
-> do not describe the Rust build and must not be quoted as current
-> performance. The shape of the trade-offs still informs sizing; the absolute
-> figures do not.
+> **Go-era reference numbers only.** The measurements below were taken on the
+> original Go implementation. No Rust benchmark has been run, so this file
+> contains no current performance data. Do not quote a throughput number from
+> it until the Rust harness described below exists.
 
-Otterscope is a single self-contained binary over one SQLite file. These
-benchmarks map where that design comfortably sits and where it eventually
-strains, so you can size an instance honestly.
+Otterscope is a single self-contained binary over one SQLite file. The
+Go-era numbers below record where the original design sat and where it
+strained; they are history, not a current sizing guide.
 
-## Running them
+## Running the old harness
 
 The original harness lives in `internal/store/bench_test.go` in the retained
 Go reference tree:
@@ -24,9 +23,9 @@ re-derivation + FTS index). The query benchmarks (`ListRuns`, `GetStats`,
 `Search`) each seed a database of N runs (3 steps/run) and measure one query's
 latency at that size.
 
-## Results
+## Go-era results
 
-Go-era results, measured before the Rust port:
+Measured on the original Go implementation, before the Rust port:
 
 | Operation | Dataset | Result |
 | --- | --- | --- |
@@ -61,10 +60,11 @@ There is no `cargo bench` target yet. To make these numbers current:
 4. Replace the table and drop the Go-era banner only when the Rust figures are
    committed; until then the README must not quote a throughput number.
 
-## Reading them
+## Reading the Go-era results
 
-These conclusions are structural and still expected to hold, but re-measure
-them on the Rust build before using them for capacity planning.
+The structural conclusions below are expected to carry over, but they are not
+Rust measurements; re-measure them on the Rust build before using them for
+capacity planning.
 
 - **Ingest** is a serialized single-writer path (by design — it avoids
   SQLITE_BUSY churn). The number to watch is spans/sec; a few thousand

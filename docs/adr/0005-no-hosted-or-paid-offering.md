@@ -7,7 +7,7 @@ ADR-0003 left a door open: "Monetization is explicitly out of scope pre-1.0. If 
 
 Intent doesn't reach a reader; the tracker does. Anyone evaluating Otterscope sees the issue list before they see an ADR, and an open "Billing + plan tiers (Stripe)" issue reads as open-core with an upsell in flight. That is precisely the Phoenix objection ADR-0003 cites as an adoption blocker. The hedge cost us the positioning it was meant to preserve, while buying nothing: no hosting work was in progress, and the self-hosted segment ADR-0003 targets has low willingness to pay anyway.
 
-The hosting lift is also architecturally hostile to ADR-0001. Multi-tenancy, signup, provisioning, and usage metering are exactly the "needs a different design" pressure the single-static-binary rule exists to refuse.
+The hosting lift is also architecturally hostile to ADR-0001. Multi-tenancy, signup, provisioning, and usage metering are exactly the "needs a different design" pressure the single self-contained binary rule exists to refuse.
 
 ## Decision
 - **There is no paid tier, no usage metering, no seat fees, and no managed hosting** — not pre-1.0, not post-1.0. Otterscope is software you run.

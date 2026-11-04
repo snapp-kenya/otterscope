@@ -49,8 +49,11 @@ commit history has the rest.
   database files; back up before switching.
 - Builds now come from the Rust workspace after the frontend is built:
   `cd web && bun install && bun run build`, then `cd rust && cargo build
-  --release`. The Go module is no longer the build target and the `go install`
-  channel is retired.
+  --release`. The old Go build and its installation path are retired.
+- Release builds produce four native archives (Linux amd64/arm64, macOS arm64,
+  Windows amd64) and a multi-arch distroless GHCR image. Linux binaries link
+  glibc 2.39+; Homebrew, deb/rpm, darwin amd64, Windows arm64 and signing are
+  not shipped yet (ADR-0004 amendment, [docs/packaging.md](docs/packaging.md)).
 - The web UI is rebuilt on Bun + React 19 + TanStack Router/Query + Tailwind +
   shadcn-style components. `bun test` replaces vitest, `bun run lint` keeps
   oxlint, and `bun run build` produces the `web/dist` the server embeds.

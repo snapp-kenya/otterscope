@@ -1,9 +1,9 @@
 # Packaging
 
 The Rust port ships from `.github/workflows/rust.yml` (CI) and
-`.github/workflows/release.yml` (tags). The Go pipeline is retired: `.goreleaser.yaml`
-is gone, and `.github/workflows/ci.yml` is a manual, reference-only workflow for
-the frozen Go tree.
+`.github/workflows/release.yml` (tags). The Go pipeline is retired: the old
+`.goreleaser.yaml` is gone, and `.github/workflows/ci.yml` is a manual,
+reference-only workflow for the frozen Go tree.
 
 ## Toolchain
 
@@ -24,7 +24,8 @@ and release builds use that file, so local and CI formatting/clippy agree.
 Each archive contains the `otterscope` binary plus `LICENSE` and `README.md`.
 The release workflow rewrites the workspace version from the tag before
 building, so `otterscope version` reports the released version; a local build
-reports the crate version (`0.1.0`).
+reports the crate version (`0.1.0`). There are no separate checksum files and
+no signing.
 
 ## Known gaps
 
@@ -32,11 +33,13 @@ reports the crate version (`0.1.0`).
   need glibc 2.39 or newer. There is no musl build: a `*-unknown-linux-musl`
   target would need `cross` (or an equivalent sysroot setup), and that is not
   wired up yet. Do not advertise the Linux downloads as static until it is.
-- Only the four targets above are built. Darwin amd64, Windows arm64, signing,
-  deb/rpm, Homebrew, and `go install` from ADR-0004 are deferred with the Go
-  pipeline; they can be added to the same matrix later.
+- Only the four targets above are built. Darwin amd64, Windows arm64 and
+  signing are deferred; Homebrew, deb/rpm and the old `go install` channel
+  from ADR-0004 are not shipped (the Go installation path retired with the Go
+  module). Homebrew and distro packages can be added to the same matrix later
+  if demand justifies the packaging work.
 - The arm64 container is compiled under QEMU, so the first multi-arch build is
-  slow. It produces the same `linux/amd64,linux/arm64` manifest as the Go
+  slow. It produces the same `linux/amd64,linux/arm64` manifest as the old Go
   pipeline did.
 
 ## Container
