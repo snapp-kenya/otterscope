@@ -16,5 +16,5 @@ mod judge;
 #[cfg(test)]
 mod tests;
 
-pub use assert::{Assertion, Result, Validate, evaluate, final_output, validate};
+pub use assert::{Assertion, AssertionKind, Result, Validate, evaluate, final_output, validate};
 pub use judge::{Endpoint, JudgeConfig, judge, parse_judge_config};

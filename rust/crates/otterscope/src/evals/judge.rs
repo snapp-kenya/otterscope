@@ -61,7 +61,7 @@ impl Assertion {
     /// A malformed config is reported so the caller can refuse rather than
     /// evaluate.
     pub fn judge_model(&self) -> anyhow::Result<String> {
-        if self.r#type != "llm_judge" {
+        if !matches!(self.kind(), Ok(super::AssertionKind::LlmJudge)) {
             return Ok(String::new());
         }
         Ok(parse_judge_config(&self.config)?.model)

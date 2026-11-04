@@ -3,7 +3,53 @@ use regex::Regex;
 use serde::de::IgnoredAny;
 use serde::{Deserialize, Serialize};
 
-use crate::model::{Run, Step};
+use crate::model::{InvalidEnumValue, Run, Step};
+
+/// The deterministic and judge assertion kinds. The database CHECK constraint
+/// and this enum must agree; the store decodes rows through [`AssertionKind`]
+/// so an invalid value cannot round-trip into an [`Assertion`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssertionKind {
+    Contains,
+    NotContains,
+    Regex,
+    IsJson,
+    MaxLatencyMs,
+    MaxCostUsd,
+    LlmJudge,
+}
+
+impl AssertionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AssertionKind::Contains => "contains",
+            AssertionKind::NotContains => "not_contains",
+            AssertionKind::Regex => "regex",
+            AssertionKind::IsJson => "is_json",
+            AssertionKind::MaxLatencyMs => "max_latency_ms",
+            AssertionKind::MaxCostUsd => "max_cost_usd",
+            AssertionKind::LlmJudge => "llm_judge",
+        }
+    }
+}
+
+impl TryFrom<&str> for AssertionKind {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: &str) -> std::result::Result<Self, InvalidEnumValue> {
+        match value {
+            "contains" => Ok(AssertionKind::Contains),
+            "not_contains" => Ok(AssertionKind::NotContains),
+            "regex" => Ok(AssertionKind::Regex),
+            "is_json" => Ok(AssertionKind::IsJson),
+            "max_latency_ms" => Ok(AssertionKind::MaxLatencyMs),
+            "max_cost_usd" => Ok(AssertionKind::MaxCostUsd),
+            "llm_judge" => Ok(AssertionKind::LlmJudge),
+            other => Err(InvalidEnumValue::new("assertion type", other)),
+        }
+    }
+}
 
 /// One per-project check applied to completed runs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -19,6 +65,13 @@ pub struct Assertion {
     /// Meaning depends on `r#type`.
     pub config: String,
     pub enabled: bool,
+}
+
+impl Assertion {
+    /// Decode the stored/wire spelling into the typed kind.
+    pub fn kind(&self) -> std::result::Result<AssertionKind, InvalidEnumValue> {
+        AssertionKind::try_from(self.r#type.as_str())
+    }
 }
 
 /// Result of one assertion against one run.
@@ -57,28 +110,31 @@ impl Validate for Assertion {
 }
 
 pub fn validate(a: &Assertion) -> anyhow::Result<()> {
-    match a.r#type.as_str() {
-        "contains" | "not_contains" => {
+    let kind = match a.kind() {
+        Ok(kind) => kind,
+        Err(_) => bail!("unknown assertion type {:?}", a.r#type),
+    };
+    match kind {
+        AssertionKind::Contains | AssertionKind::NotContains => {
             if a.config.is_empty() {
                 bail!("{} needs a non-empty config string", a.r#type);
             }
         }
-        "regex" => {
+        AssertionKind::Regex => {
             if let Err(e) = Regex::new(&a.config) {
                 bail!("bad regex: {e}");
             }
         }
-        "is_json" => {}
-        "max_latency_ms" | "max_cost_usd" => {
+        AssertionKind::IsJson => {}
+        AssertionKind::MaxLatencyMs | AssertionKind::MaxCostUsd => {
             let n: f64 = serde_json::from_str(&a.config).unwrap_or(0.0);
             if n <= 0.0 {
                 bail!("{} needs a positive number config", a.r#type);
             }
         }
-        "llm_judge" => {
+        AssertionKind::LlmJudge => {
             super::judge::parse_judge_config(&a.config)?;
         }
-        other => bail!("unknown assertion type {other:?}"),
     }
     Ok(())
 }
@@ -116,22 +172,26 @@ fn valid_json(text: &str) -> bool {
 /// a server-configured endpoint, so callers use [`super::judge`] instead.
 pub fn evaluate(a: &Assertion, run: &Run, steps: &[Step]) -> Result {
     let mut res = Result::for_assertion(a);
-    match a.r#type.as_str() {
-        "contains" => {
+    let Ok(kind) = a.kind() else {
+        res.detail = format!("unknown type {:?}", a.r#type);
+        return res;
+    };
+    match kind {
+        AssertionKind::Contains => {
             let out = final_output(steps);
             res.pass = out.contains(&a.config);
             if !res.pass {
                 res.detail = format!("output does not contain {:?}", a.config);
             }
         }
-        "not_contains" => {
+        AssertionKind::NotContains => {
             let out = final_output(steps);
             res.pass = !out.contains(&a.config);
             if !res.pass {
                 res.detail = format!("output contains forbidden {:?}", a.config);
             }
         }
-        "regex" => {
+        AssertionKind::Regex => {
             let Ok(re) = Regex::new(&a.config) else {
                 res.detail = "invalid regex".into();
                 return res;
@@ -141,7 +201,7 @@ pub fn evaluate(a: &Assertion, run: &Run, steps: &[Step]) -> Result {
                 res.detail = format!("output does not match /{}/", a.config);
             }
         }
-        "is_json" => {
+        AssertionKind::IsJson => {
             let out = final_output(steps);
             let trimmed = out.trim();
             res.pass = !trimmed.is_empty() && valid_json(trimmed);
@@ -149,7 +209,7 @@ pub fn evaluate(a: &Assertion, run: &Run, steps: &[Step]) -> Result {
                 res.detail = "output is not valid JSON".into();
             }
         }
-        "max_latency_ms" => {
+        AssertionKind::MaxLatencyMs => {
             let max_ms: f64 = serde_json::from_str(&a.config).unwrap_or(0.0);
             let end = run.end.unwrap_or(run.start);
             let got = (end - run.start).num_milliseconds() as f64;
@@ -158,7 +218,7 @@ pub fn evaluate(a: &Assertion, run: &Run, steps: &[Step]) -> Result {
                 res.detail = format!("run took {got:.0}ms > {max_ms:.0}ms");
             }
         }
-        "max_cost_usd" => {
+        AssertionKind::MaxCostUsd => {
             let max_usd: f64 = serde_json::from_str(&a.config).unwrap_or(0.0);
             let Some(cost) = run.cost_usd else {
                 res.detail = "run cost unknown (unpriced model)".into();
@@ -169,8 +229,8 @@ pub fn evaluate(a: &Assertion, run: &Run, steps: &[Step]) -> Result {
                 res.detail = format!("run cost ${cost:.4} > ${max_usd:.4}");
             }
         }
-        other => {
-            res.detail = format!("unknown type {other:?}");
+        AssertionKind::LlmJudge => {
+            res.detail = "llm_judge is evaluated by the judge endpoint".into();
         }
     }
     res

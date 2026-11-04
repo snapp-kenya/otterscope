@@ -8,6 +8,14 @@ commit history has the rest.
 
 ### Breaking
 
+- The SQLite schema is redesigned from a single `STRICT` baseline
+  (`0001_initial.sql`) instead of the 21 migrations inherited from the Go
+  build: real column types, `CHECK`-constrained enums, cascading foreign keys
+  and an external-content FTS5 index. **A database created by an older
+  Otterscope is refused**, with an error telling the operator to start a new
+  database (or restore a backup) and re-ingest; there is no in-place upgrade.
+  The JSON API, OTLP ingest, MCP, CLI flags and port remain unchanged. See
+  [ADR-0008](docs/adr/0008-sqlite-schema-redesign.md).
 - The server now has **one HTTP listener, always on port 80**. The UI, JSON
   API, `/mcp`, share links and OTLP ingest (`POST /v1/traces`) all live there;
   there is no separate OTLP port. `-listen`, `-otlp`, `OTTERSCOPE_LISTEN`,
@@ -60,10 +68,9 @@ commit history has the rest.
 - The backend is ported from Go to Rust (axum, rusqlite with bundled SQLite,
   prost, rust-embed). The binary stays single and self-contained with the UI
   embedded. CLI flags, `OTTERSCOPE_*` variables and the flags > env > file >
-  defaults precedence keep their old spellings. The SQLite schema and
-  append-only migrations are preserved, so an existing database opens without
-  a conversion step, but the two builds no longer promise byte-compatible
-  database files; back up before switching.
+  defaults precedence keep their old spellings. The SQLite schema was
+  redesigned after the port (ADR-0008); future schema changes remain new
+  numbered migration files.
 - Builds now come from the Rust workspace after the frontend is built:
   `cd web && bun install && bun run build`, then `cd rust && cargo build
   --release`. The old Go build and its installation path are retired.
@@ -81,9 +88,9 @@ commit history has the rest.
   query per run, so a large accepted batch no longer queues behind its own
   rederivation.
 - Tokens are listed by id, name, scope and last use. The secret is returned
-  only at creation and stored only as a digest, so a database or a backup
-  no longer hands out working credentials; rows written by an older release
-  are hashed in place the first time the store opens.
+  only at creation and stored only as a digest, so a database or a backup no
+  longer hands out working credentials. The `read_tokens` table became
+  `tokens` because it also holds admin-scope tokens.
 - The container image runs as uid 65532 on a distroless base with `/data` as
   the only writable path, and keeps the binary's loopback defaults.
   `docker-compose.yml` publishes both ports on `127.0.0.1` and enables read
@@ -101,9 +108,10 @@ commit history has the rest.
   keeps the architecture map, the hard rules, the development commands and the
   no-CI gate, written without vendor-specific tooling references.
 - The frozen Go implementation (`cmd/`, `internal/`, `go.mod`, `go.sum`,
-  `web/embed.go`) is deleted, along with its reference-only workflow; the Rust
-  workspace is now the only implementation. Existing SQLite databases still
-  open without a conversion step.
+- The frozen Go implementation (`cmd/`, `internal/`, `go.mod`, `go.sum`,
+  `web/embed.go`) is deleted; the Rust workspace is now the only implementation.
+  The Go-era SQLite schema was replaced by the baseline described under
+  "Breaking"; databases in that old format are refused.
 
 ### Fixed
 

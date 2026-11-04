@@ -6,6 +6,32 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// A value read from a constrained column that is not one of the values the
+/// schema or the domain allows. Reads use this to fail instead of silently
+/// coercing a corrupt row into a default variant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidEnumValue {
+    kind: &'static str,
+    value: String,
+}
+
+impl InvalidEnumValue {
+    pub fn new(kind: &'static str, value: impl Into<String>) -> Self {
+        Self {
+            kind,
+            value: value.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for InvalidEnumValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid {} {:?}", self.kind, self.value)
+    }
+}
+
+impl std::error::Error for InvalidEnumValue {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -34,6 +60,19 @@ impl Status {
     }
 }
 
+impl TryFrom<&str> for Status {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: &str) -> std::result::Result<Self, InvalidEnumValue> {
+        match value {
+            "running" => Ok(Status::Running),
+            "ok" => Ok(Status::Ok),
+            "error" => Ok(Status::Error),
+            other => Err(InvalidEnumValue::new("run status", other)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepKind {
@@ -50,6 +89,20 @@ impl StepKind {
             StepKind::Llm => "llm",
             StepKind::Tool => "tool",
             StepKind::Generic => "generic",
+        }
+    }
+}
+
+impl TryFrom<&str> for StepKind {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: &str) -> std::result::Result<Self, InvalidEnumValue> {
+        match value {
+            "agent" => Ok(StepKind::Agent),
+            "llm" => Ok(StepKind::Llm),
+            "tool" => Ok(StepKind::Tool),
+            "generic" => Ok(StepKind::Generic),
+            other => Err(InvalidEnumValue::new("step kind", other)),
         }
     }
 }
@@ -144,5 +197,23 @@ mod tests {
     fn error_outranks_ok_and_running() {
         assert!(Status::Error.rank() > Status::Ok.rank());
         assert!(Status::Ok.rank() > Status::Running.rank());
+    }
+
+    #[test]
+    fn enums_round_trip_through_as_str() {
+        for raw in ["running", "ok", "error"] {
+            assert_eq!(Status::try_from(raw).unwrap().as_str(), raw);
+        }
+        for raw in ["agent", "llm", "tool", "generic"] {
+            assert_eq!(StepKind::try_from(raw).unwrap().as_str(), raw);
+        }
+    }
+
+    #[test]
+    fn unknown_enum_values_are_errors() {
+        assert!(Status::try_from("bogus").is_err());
+        assert!(StepKind::try_from("").is_err());
+        let err = Status::try_from("bogus").unwrap_err();
+        assert_eq!(err.to_string(), r#"invalid run status "bogus""#);
     }
 }

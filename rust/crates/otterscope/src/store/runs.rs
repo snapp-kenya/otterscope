@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{LlmCall, Message, Run, Status, Step, StepKind, ToolCall};
 
-use super::{Filter, datetime, nanos, parse_kind, parse_status};
+use super::{Filter, datetime, nanos, sql_enum_error};
 
 pub(crate) const RUN_COLUMNS: &str = "id, project, service, agent_name, status, start_ns, end_ns, \
      input_tokens, output_tokens, llm_calls, tool_calls, models, prompts, cost_usd, cost_partial, error";
@@ -21,7 +21,7 @@ const UPSERT_STEP_SQL: &str = "
      start_ns, end_ns, error,
      provider, request_model, response_model, input_tokens, output_tokens,
      cache_read_tokens, cache_creation_tokens, reasoning_tokens,
-     tool_name, tool_call_id, detail, cost_usd, prompt)
+     tool_name, tool_call_id, detail_json, cost_usd, prompt)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(project, id) DO UPDATE SET
      run_id=excluded.run_id, parent_id=excluded.parent_id,
@@ -35,13 +35,34 @@ const UPSERT_STEP_SQL: &str = "
      cache_creation_tokens=excluded.cache_creation_tokens,
      reasoning_tokens=excluded.reasoning_tokens,
      tool_name=excluded.tool_name, tool_call_id=excluded.tool_call_id,
-     detail=excluded.detail, cost_usd=excluded.cost_usd, prompt=excluded.prompt
+     detail_json=excluded.detail_json, cost_usd=excluded.cost_usd, prompt=excluded.prompt
     WHERE steps.service = excluded.service";
 
+/// A project name. The newtype keeps the two halves of [`RunKey`] from being
+/// swapped at a call site that takes both as plain strings.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct RunKey {
-    project: String,
-    run_id: String,
+struct ProjectName(String);
+
+impl ProjectName {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An external trace id. Newtype for the same reason as [`ProjectName`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RunId(String);
+
+impl RunId {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RunKey {
+    project: ProjectName,
+    run_id: RunId,
 }
 
 impl super::Store {
@@ -129,21 +150,18 @@ impl super::Store {
 }
 
 fn run_from_row(row: &Row<'_>) -> rusqlite::Result<Run> {
-    let status: String = row.get(4)?;
+    let status_raw: String = row.get(4)?;
+    let status = Status::try_from(status_raw.as_str()).map_err(|err| sql_enum_error(4, err))?;
     let start_ns: i64 = row.get(5)?;
-    let end_ns: i64 = row.get(6)?;
+    let end_ns: Option<i64> = row.get(6)?;
     Ok(Run {
         id: row.get(0)?,
         project: row.get(1)?,
         service: row.get(2)?,
         agent_name: row.get(3)?,
-        status: parse_status(&status),
+        status,
         start: datetime(start_ns),
-        end: if end_ns == 0 {
-            None
-        } else {
-            Some(datetime(end_ns))
-        },
+        end: end_ns.map(datetime),
         input_tokens: row.get(7)?,
         output_tokens: row.get(8)?,
         llm_calls: row.get(9)?,
@@ -159,6 +177,10 @@ fn run_from_row(row: &Row<'_>) -> rusqlite::Result<Run> {
 /// The transactional body of [`super::Store::upsert_steps`], shared with
 /// ingest. Returns the number of steps refused because the stored row under
 /// that (project, span ID) belongs to another resource service.
+///
+/// The steps' foreign key to `runs` is deferred, so a new run may be created
+/// by [`rederive_runs`] after its steps have been written, all in the same
+/// transaction. The FTS index is maintained by SQLite triggers on `steps`.
 pub(crate) fn upsert_steps_tx(conn: &Connection, steps: &[Step]) -> anyhow::Result<usize> {
     if steps.is_empty() {
         return Ok(0);
@@ -171,11 +193,6 @@ pub(crate) fn upsert_steps_tx(conn: &Connection, steps: &[Step]) -> anyhow::Resu
 
     {
         let mut ins = conn.prepare(UPSERT_STEP_SQL)?;
-        let mut fts_del =
-            conn.prepare("DELETE FROM steps_fts WHERE project = ? AND step_id = ?")?;
-        let mut fts_ins = conn.prepare(
-            "INSERT INTO steps_fts (project, run_id, step_id, content) VALUES (?,?,?,?)",
-        )?;
         let mut count = 0usize;
 
         for step in steps {
@@ -198,7 +215,7 @@ pub(crate) fn upsert_steps_tx(conn: &Connection, steps: &[Step]) -> anyhow::Resu
                     step.agent_name,
                     step.status.as_str(),
                     nanos(step.start),
-                    step.end.map(nanos).unwrap_or(0),
+                    step.end.map(nanos),
                     step.error,
                     llm.provider,
                     llm.request_model,
@@ -221,16 +238,10 @@ pub(crate) fn upsert_steps_tx(conn: &Connection, steps: &[Step]) -> anyhow::Resu
                 count += 1;
                 continue;
             }
-            fts_del
-                .execute(params![project, step.id])
-                .with_context(|| format!("fts delete {}", step.id))?;
-            fts_ins
-                .execute(params![project, step.run_id, step.id, fts_content(step)])
-                .with_context(|| format!("fts insert {}", step.id))?;
 
             let key = RunKey {
-                project: project.to_string(),
-                run_id: step.run_id.clone(),
+                project: ProjectName(project.to_string()),
+                run_id: RunId(step.run_id.clone()),
             };
             if seen.insert(key.clone()) {
                 keys.push(key);
@@ -252,7 +263,7 @@ struct DerivedRun {
     models: String,
     prompts: String,
     start_ns: i64,
-    end_ns: i64,
+    end_ns: Option<i64>,
     input_tokens: i64,
     output_tokens: i64,
     llm_calls: i64,
@@ -274,14 +285,14 @@ fn rederive_runs(conn: &Connection, keys: &[RunKey]) -> anyhow::Result<()> {
     // splatting thousands of parameters into the statement.
     conn.execute_batch(
         "CREATE TEMP TABLE IF NOT EXISTS touched_runs (
-             project TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY (project, run_id))",
+             project TEXT NOT NULL, run_id TEXT NOT NULL, PRIMARY KEY (project, run_id)) STRICT",
     )?;
     conn.execute_batch("DELETE FROM touched_runs")?;
     {
         let mut touch =
             conn.prepare("INSERT OR IGNORE INTO touched_runs (project, run_id) VALUES (?, ?)")?;
         for key in keys {
-            touch.execute(params![key.project, key.run_id])?;
+            touch.execute(params![key.project.as_str(), key.run_id.as_str()])?;
         }
     }
 
@@ -353,6 +364,7 @@ fn rederive_runs(conn: &Connection, keys: &[RunKey]) -> anyhow::Result<()> {
               models=excluded.models, prompts=excluded.prompts, cost_usd=excluded.cost_usd,
               cost_partial=excluded.cost_partial, error=excluded.error",
         )?;
+        let mut ensured_projects = HashSet::new();
         for run in &derived {
             // Error outranks a delivered root, which outranks still-running.
             let status = if run.has_error != 0 {
@@ -362,6 +374,9 @@ fn rederive_runs(conn: &Connection, keys: &[RunKey]) -> anyhow::Result<()> {
             } else {
                 Status::Running
             };
+            if ensured_projects.insert(run.project.as_str()) {
+                super::projects::ensure_project(conn, &run.project)?;
+            }
             upsert
                 .execute(params![
                     run.project,
@@ -394,16 +409,17 @@ fn load_steps(conn: &Connection, project: &str, run_id: &str) -> anyhow::Result<
                start_ns, end_ns, error,
                provider, request_model, response_model, input_tokens, output_tokens,
                cache_read_tokens, cache_creation_tokens, reasoning_tokens,
-               tool_name, tool_call_id, detail, cost_usd, prompt
+               tool_name, tool_call_id, detail_json, cost_usd, prompt
         FROM steps WHERE project = ? AND run_id = ? ORDER BY start_ns",
     )?;
     let rows = stmt.query_map(params![project, run_id], |row| {
-        let kind: String = row.get(3)?;
-        let status: String = row.get(7)?;
+        let kind_raw: String = row.get(3)?;
+        let kind = StepKind::try_from(kind_raw.as_str()).map_err(|err| sql_enum_error(3, err))?;
+        let status_raw: String = row.get(7)?;
+        let status = Status::try_from(status_raw.as_str()).map_err(|err| sql_enum_error(7, err))?;
         let start_ns: i64 = row.get(8)?;
-        let end_ns: i64 = row.get(9)?;
+        let end_ns: Option<i64> = row.get(9)?;
         let detail: String = row.get(21)?;
-        let kind = parse_kind(&kind);
         let mut step = Step {
             id: row.get(0)?,
             project: project.to_string(),
@@ -413,13 +429,9 @@ fn load_steps(conn: &Connection, project: &str, run_id: &str) -> anyhow::Result<
             name: row.get(4)?,
             service: row.get(5)?,
             agent_name: row.get(6)?,
-            status: parse_status(&status),
+            status,
             start: datetime(start_ns),
-            end: if end_ns == 0 {
-                None
-            } else {
-                Some(datetime(end_ns))
-            },
+            end: end_ns.map(datetime),
             error: row.get(10)?,
             llm: None,
             tool: None,
@@ -480,36 +492,7 @@ pub(crate) fn fts_query(query: &str) -> String {
     terms.join(" ")
 }
 
-/// The searchable text for a step: name, model/provider, message contents and
-/// tool i/o.
-fn fts_content(step: &Step) -> String {
-    let mut out = step.name.clone();
-    if let Some(llm) = &step.llm {
-        out.push(' ');
-        out.push_str(&llm.provider);
-        out.push(' ');
-        out.push_str(&llm.request_model);
-        for msg in &llm.input_messages {
-            out.push(' ');
-            out.push_str(&msg.content);
-        }
-        for msg in &llm.output_messages {
-            out.push(' ');
-            out.push_str(&msg.content);
-        }
-    }
-    if let Some(tool) = &step.tool {
-        out.push(' ');
-        out.push_str(&tool.name);
-        out.push(' ');
-        out.push_str(&tool.arguments);
-        out.push(' ');
-        out.push_str(&tool.result);
-    }
-    out
-}
-
-/// The JSON shape of the steps.detail column: kind-specific payloads too
+/// The JSON shape of the steps.detail_json column: kind-specific payloads too
 /// large or nested for flat columns.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct StepDetail {

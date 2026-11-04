@@ -36,7 +36,8 @@ pub(crate) fn filter_where(filter: &Filter) -> (String, Vec<Value>) {
     if !query.is_empty() {
         where_clause.push_str(
             " AND EXISTS (SELECT 1 FROM steps_fts \
-             WHERE steps_fts.project = runs.project AND steps_fts.run_id = runs.id \
+             JOIN steps ON steps.rowid = steps_fts.rowid \
+             WHERE steps.project = runs.project AND steps.run_id = runs.id \
              AND steps_fts MATCH ?)",
         );
         args.push(Value::Text(query));
@@ -76,7 +77,7 @@ impl super::Store {
                 "
                 SELECT count(*),
                        coalesce(sum(status = 'error'), 0),
-                       coalesce(avg((end_ns - start_ns) / 1e6), 0),
+                       coalesce(avg((coalesce(end_ns, start_ns) - start_ns) / 1e6), 0),
                        sum(cost_usd), avg(cost_usd),
                        coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0)
                 FROM runs{where_clause}"
@@ -144,8 +145,8 @@ fn duration_percentile(
     let mut params = args.to_vec();
     params.push(Value::Integer(offset));
     let sql = format!(
-        "SELECT (end_ns - start_ns) / 1000000 FROM runs{where_clause} \
-         ORDER BY (end_ns - start_ns) LIMIT 1 OFFSET ?"
+        "SELECT (coalesce(end_ns, start_ns) - start_ns) / 1000000 FROM runs{where_clause} \
+         ORDER BY (coalesce(end_ns, start_ns) - start_ns) LIMIT 1 OFFSET ?"
     );
     let mut stmt = conn.prepare(&sql)?;
     let ms: i64 = stmt.query_row(params_from_iter(params), |row| row.get(0))?;

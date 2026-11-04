@@ -194,14 +194,14 @@ fn migrations_apply_and_are_idempotent() {
         .unwrap();
     assert_eq!(applied as usize, MIGRATIONS.len());
 
-    let created: String = st
+    let created_ns: i64 = st
         .with(|c| {
-            c.query_row("SELECT value FROM meta WHERE key = 'created_at'", [], |r| {
+            c.query_row("SELECT created_ns FROM instance WHERE id = 1", [], |r| {
                 r.get(0)
             })
         })
         .unwrap();
-    assert!(!created.is_empty());
+    assert!(created_ns > 0, "instance creation time is recorded");
     drop(st);
 
     let path = TempDir::new();
@@ -214,6 +214,365 @@ fn migrations_apply_and_are_idempotent() {
         .with(|c| c.query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0)))
         .unwrap();
     assert_eq!(applied as usize, MIGRATIONS.len());
+}
+
+// ---------------------------------------------------------------------------
+// Schema standards (ADR-0008)
+// ---------------------------------------------------------------------------
+
+fn fts_match_count(st: &Store, term: &str) -> i64 {
+    st.with(|c| {
+        c.query_row(
+            "SELECT count(*) FROM steps_fts WHERE steps_fts MATCH ?1",
+            rusqlite::params![term],
+            |r| r.get(0),
+        )
+    })
+    .unwrap()
+}
+
+fn table_definition(st: &Store, name: &str) -> String {
+    st.with(|c| {
+        c.query_row(
+            "SELECT coalesce(sql, '') FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            [name],
+            |r| r.get(0),
+        )
+    })
+    .unwrap()
+}
+
+#[test]
+fn baseline_is_one_migration_and_every_ordinary_table_is_strict() {
+    assert_eq!(
+        MIGRATIONS.len(),
+        1,
+        "the baseline replaced the 21 old files"
+    );
+    assert_eq!(MIGRATIONS[0].0, "0001_initial.sql");
+
+    let st = TestStore::open();
+    let tables: Vec<String> = st
+        .with(|c| {
+            let mut stmt = c.prepare(
+                "SELECT name FROM sqlite_schema
+                  WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                  ORDER BY name",
+            )?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+        .unwrap();
+
+    let ordinary: Vec<&String> = tables
+        .iter()
+        .filter(|name| !name.starts_with("steps_fts"))
+        .collect();
+    assert!(
+        ordinary.len() >= 12,
+        "expected the full baseline, got {ordinary:?}"
+    );
+    for name in ordinary {
+        let sql = table_definition(&st, name);
+        assert!(sql.contains("STRICT"), "{name} is not STRICT:\n{sql}");
+    }
+    // The FTS5 virtual table and its shadow tables cannot be STRICT; they are
+    // the only exceptions and are never queried through the store API.
+    assert!(tables.iter().any(|name| name == "steps_fts"));
+    for name in &tables {
+        if name.starts_with("steps_fts") {
+            assert!(
+                name == "steps_fts" || name.starts_with("steps_fts_"),
+                "unexpected shadow table {name}"
+            );
+        }
+    }
+}
+
+#[test]
+fn strict_rejects_a_wrong_column_type() {
+    let st = TestStore::open();
+    let err = st
+        .with(|c| {
+            c.execute(
+                "INSERT INTO runs (project, id, status, start_ns)
+                 VALUES ('default', 'bad', 'ok', 'not-an-integer')",
+                [],
+            )
+        })
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("INTEGER column") || message.contains("cannot store TEXT"),
+        "{message}"
+    );
+}
+
+#[test]
+fn check_constraints_reject_invalid_enums() {
+    let st = TestStore::open();
+    let long_hash = "a".repeat(64);
+    let cases = [
+        (
+            "INSERT INTO runs (project, id, status, start_ns) VALUES ('default', 'x', 'bogus', 1)"
+                .to_string(),
+            "run status",
+        ),
+        (
+            "INSERT INTO steps (project, id, run_id, kind, name, status, start_ns)
+             VALUES ('default', 'x', 'no-run', 'bogus', 'n', 'ok', 1)"
+                .to_string(),
+            "step kind",
+        ),
+        (
+            format!(
+                "INSERT INTO tokens (id, token_hash, name, scope, created_ns)
+                 VALUES ('t', '{long_hash}', 'n', 'root', 1)"
+            ),
+            "token scope",
+        ),
+        (
+            "INSERT INTO alerts (project, name, type, threshold, webhook_url, created_ns)
+             VALUES ('default', 'a', 'bogus', 1.0, 'https://example.com/h', 1)"
+                .to_string(),
+            "alert type",
+        ),
+        (
+            "INSERT INTO assertions (project, name, type, created_ns)
+             VALUES ('default', 'a', 'bogus', 1)"
+                .to_string(),
+            "assertion type",
+        ),
+        (
+            "INSERT INTO audit_log (at_ns, action, entity) VALUES (1, 'update', 'project')"
+                .to_string(),
+            "audit action",
+        ),
+        (
+            "INSERT INTO saved_views (name, params_json, created_ns) VALUES ('v', '{', 1)"
+                .to_string(),
+            "view params JSON",
+        ),
+        (
+            "INSERT INTO runs (project, id, status, start_ns, cost_partial)
+             VALUES ('default', 'x', 'ok', 1, 2)"
+                .to_string(),
+            "boolean",
+        ),
+    ];
+    for (sql, label) in cases {
+        let err = st.with(|c| c.execute(&sql, [])).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("CHECK constraint failed"),
+            "{label} was not rejected by a CHECK: {message}"
+        );
+    }
+}
+
+#[test]
+fn foreign_keys_are_enabled_and_cascade() {
+    let st = TestStore::open();
+    let on: i64 = st
+        .with(|c| c.query_row("PRAGMA foreign_keys", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(on, 1);
+
+    // Deleting a run removes its steps, verdicts and share links. The
+    // assertion itself is independent and survives.
+    st.upsert_steps(&sample_run("r1", 1000)).unwrap();
+    let assertion = st
+        .create_assertion(Assertion {
+            name: "cascades".into(),
+            r#type: "is_json".into(),
+            enabled: true,
+            ..Assertion::default()
+        })
+        .unwrap();
+    st.save_assertion_results(
+        "default",
+        "r1",
+        &[EvalResult {
+            assertion_id: assertion.id,
+            pass: true,
+            ..EvalResult::default()
+        }],
+    )
+    .unwrap();
+    st.create_share("default", "r1").unwrap();
+    st.with(|c| {
+        c.execute(
+            "DELETE FROM runs WHERE project = 'default' AND id = 'r1'",
+            [],
+        )
+    })
+    .unwrap();
+    for (table, column, value) in [
+        ("steps", "run_id", "r1"),
+        ("assertion_results", "run_id", "r1"),
+        ("shares", "run_id", "r1"),
+    ] {
+        let left: i64 = st
+            .with(|c| {
+                c.query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE {column} = ?1"),
+                    [value],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(left, 0, "{table} did not cascade");
+    }
+    assert_eq!(st.list_assertions("default").unwrap().len(), 1);
+
+    // Deleting a project cascades every project-scoped table.
+    st.create_project("cascade").unwrap();
+    let mut steps = sample_run("r-cascade", 2000);
+    for step in &mut steps {
+        step.project = "cascade".into();
+    }
+    st.upsert_steps(&steps).unwrap();
+    st.create_assertion(Assertion {
+        project: "cascade".into(),
+        name: "a".into(),
+        r#type: "is_json".into(),
+        enabled: true,
+        ..Assertion::default()
+    })
+    .unwrap();
+    st.create_alert(Rule {
+        project: "cascade".into(),
+        name: "a".into(),
+        r#type: "error_rate".into(),
+        threshold: 0.5,
+        window_secs: 3600,
+        webhook_url: "https://example.com/hook".into(),
+        enabled: true,
+        ..Rule::default()
+    })
+    .unwrap();
+    st.ingest_batch("cascade", b"raw", &[]).unwrap();
+    st.with(|c| c.execute("DELETE FROM projects WHERE name = 'cascade'", []))
+        .unwrap();
+    for table in [
+        "runs",
+        "steps",
+        "assertions",
+        "alerts",
+        "raw_batches",
+        "assertion_results",
+        "shares",
+    ] {
+        let left: i64 = st
+            .with(|c| {
+                c.query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE project = 'cascade'"),
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(left, 0, "{table} did not cascade from projects");
+    }
+}
+
+#[test]
+fn foreign_key_violations_are_rejected() {
+    let st = TestStore::open();
+    let err = st
+        .with(|c| {
+            c.execute(
+                "INSERT INTO steps (project, id, run_id, kind, name, status, start_ns)
+                 VALUES ('default', 'orphan', 'no-such-run', 'agent', 'n', 'ok', 1)",
+                [],
+            )
+        })
+        .unwrap_err();
+    assert!(
+        err.to_string().to_lowercase().contains("foreign key"),
+        "{err}"
+    );
+
+    let err = st
+        .with(|c| {
+            c.execute(
+                "INSERT INTO shares (token, project, run_id, created_ns)
+                 VALUES ('t', 'default', 'no-such-run', 1)",
+                [],
+            )
+        })
+        .unwrap_err();
+    assert!(
+        err.to_string().to_lowercase().contains("foreign key"),
+        "{err}"
+    );
+}
+
+#[test]
+fn typed_enum_reads_refuse_corrupt_rows() {
+    let st = TestStore::open();
+    // Bypass the CHECK constraints the way a corrupted file or a future
+    // SQLite could: the read path must still reject the value, not coerce it.
+    st.with(|c| {
+        c.execute_batch(
+            "PRAGMA ignore_check_constraints = ON;
+             INSERT INTO runs (project, id, status, start_ns)
+                 VALUES ('default', 'rotten-run', 'bogus', 1);
+             INSERT INTO runs (project, id, status, start_ns)
+                 VALUES ('default', 'rotten-step', 'ok', 1);
+             INSERT INTO steps (project, id, run_id, kind, name, status, start_ns)
+                 VALUES ('default', 'rotten', 'rotten-step', 'bogus', 'n', 'ok', 1);
+             PRAGMA ignore_check_constraints = OFF;",
+        )
+    })
+    .unwrap();
+
+    let err = st.get_run("rotten-run").unwrap_err();
+    assert!(format!("{err:#}").contains("invalid run status"), "{err:#}");
+    let err = st.get_run("rotten-step").unwrap_err();
+    assert!(format!("{err:#}").contains("invalid step kind"), "{err:#}");
+}
+
+#[test]
+fn fts_triggers_stay_in_sync_on_insert_update_and_delete() {
+    let st = TestStore::open();
+    st.upsert_steps(&step_with_msg(
+        "s1",
+        "run-sync",
+        "the original needle",
+        1000,
+    ))
+    .unwrap();
+    assert_eq!(fts_match_count(&st, "needle"), 1);
+    assert_eq!(fts_row_count(&st), 2);
+
+    // Re-delivering the step with different content is an UPDATE; the old
+    // tokens must disappear and the new ones become searchable.
+    st.upsert_steps(&step_with_msg(
+        "s1",
+        "run-sync",
+        "a replacement token",
+        1000,
+    ))
+    .unwrap();
+    assert_eq!(fts_match_count(&st, "needle"), 0);
+    assert_eq!(fts_match_count(&st, "replacement"), 1);
+
+    // Deleting the run cascades to steps, and the delete trigger purges the
+    // index with them.
+    st.with(|c| {
+        c.execute(
+            "DELETE FROM runs WHERE project = 'default' AND id = 'run-sync'",
+            [],
+        )
+    })
+    .unwrap();
+    assert_eq!(fts_row_count(&st), 0);
+    assert_eq!(fts_match_count(&st, "replacement"), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -528,7 +887,7 @@ fn create_token_stores_only_digest() {
     let (id, hash, scope): (String, String, String) = st
         .with(|c| {
             c.query_row(
-                "SELECT id, token_hash, scope FROM read_tokens WHERE id = ?",
+                "SELECT id, token_hash, scope FROM tokens WHERE id = ?",
                 [&token.id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
@@ -542,7 +901,7 @@ fn create_token_stores_only_digest() {
     let found: i64 = st
         .with(|c| {
             c.query_row(
-                "SELECT count(*) FROM read_tokens WHERE id = ? OR token_hash = ? OR name = ?",
+                "SELECT count(*) FROM tokens WHERE id = ? OR token_hash = ? OR name = ?",
                 [&token.token, &token.token, &token.token],
                 |r| r.get(0),
             )
@@ -598,54 +957,124 @@ fn delete_token_by_id() {
     assert!(!st.delete_token(&token.id).unwrap());
 }
 
+/// The 21 migration names the pre-redesign build recorded. A database that
+/// carries them is exactly what the new binary must refuse.
+const LEGACY_MIGRATIONS: &[&str] = &[
+    "0001_meta.sql",
+    "0002_runs_steps.sql",
+    "0003_raw_batches.sql",
+    "0004_llm_token_details.sql",
+    "0005_run_models.sql",
+    "0006_step_detail.sql",
+    "0007_cost.sql",
+    "0008_service_idx.sql",
+    "0009_projects.sql",
+    "0010_assertions.sql",
+    "0011_project_scoped_keys.sql",
+    "0012_alerts.sql",
+    "0013_fts.sql",
+    "0014_shares.sql",
+    "0015_saved_views.sql",
+    "0016_prompt.sql",
+    "0017_read_tokens.sql",
+    "0018_audit.sql",
+    "0019_assertion_results_project.sql",
+    "0020_alert_settle.sql",
+    "0021_token_scopes.sql",
+];
+
+fn write_legacy_database(path: &str) -> usize {
+    let raw = rusqlite::Connection::open(path).unwrap();
+    raw.execute_batch(
+        "CREATE TABLE schema_migrations (
+             name TEXT PRIMARY KEY,
+             applied_at TEXT NOT NULL DEFAULT (datetime('now')));
+         CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         CREATE TABLE runs (
+             project TEXT NOT NULL DEFAULT 'default',
+             id TEXT NOT NULL,
+             status TEXT NOT NULL DEFAULT 'running',
+             start_ns INTEGER NOT NULL,
+             PRIMARY KEY (project, id));
+         INSERT INTO meta (key, value) VALUES ('created_at', '2026-01-01T00:00:00Z');
+         INSERT INTO runs (project, id, status, start_ns)
+             VALUES ('default', 'old-run', 'ok', 1000);",
+    )
+    .unwrap();
+    for name in LEGACY_MIGRATIONS {
+        raw.execute("INSERT INTO schema_migrations (name) VALUES (?)", [name])
+            .unwrap();
+    }
+    LEGACY_MIGRATIONS.len()
+}
+
 #[test]
-fn legacy_token_migrates_to_read_only() {
+fn legacy_database_is_refused_with_a_clear_message() {
     let dir = TempDir::new();
     let path = dir.join("legacy.db");
+    let path = path.to_str().unwrap().to_string();
+    assert_eq!(write_legacy_database(&path), 21);
+
+    let err = match Store::open(&path) {
+        Ok(_) => panic!("a pre-redesign database must be refused"),
+        Err(err) => err,
+    };
+    let message = format!("{err:#}");
+    assert!(message.contains("new database"), "{message}");
+    assert!(message.contains("different schema"), "{message}");
+    assert!(message.contains("0001_meta.sql"), "{message}");
+    assert!(message.contains("0008-sqlite-schema-redesign"), "{message}");
+    assert_eq!(
+        backup_files(&path).len(),
+        0,
+        "refusing a legacy database must not write a snapshot"
+    );
+
+    // Nothing was migrated: the old tables and rows are still the only ones.
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let migrations: i64 = raw
+        .query_row("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(migrations, 21);
+    let runs: i64 = raw
+        .query_row("SELECT count(*) FROM runs", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(runs, 1);
+    for new_table in [
+        "steps",
+        "steps_fts",
+        "assertion_results",
+        "shares",
+        "tokens",
+    ] {
+        let found: i64 = raw
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = ?",
+                [new_table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(found, 0, "{new_table} must not be created by a refusal");
+    }
+}
+
+#[test]
+fn tables_without_migration_history_are_refused() {
+    let dir = TempDir::new();
+    let path = dir.join("foreign.db");
     let path = path.to_str().unwrap();
-
-    let st = Store::open(path).unwrap();
-    drop(st);
-
-    let legacy = "0123456789abcdef0123456789abcdef";
-    let created = Utc::now() - Duration::hours(1);
     {
         let raw = rusqlite::Connection::open(path).unwrap();
-        raw.execute_batch(
-            "DROP TABLE read_tokens;
-             CREATE TABLE read_tokens (token TEXT PRIMARY KEY, name TEXT NOT NULL, created_ns INTEGER NOT NULL)",
-        )
-        .unwrap();
-        raw.execute(
-            "INSERT INTO read_tokens (token, name, created_ns) VALUES (?,?,?)",
-            rusqlite::params![legacy, "old-dashboard", super::nanos(created)],
-        )
-        .unwrap();
-        raw.execute(
-            "DELETE FROM schema_migrations WHERE name LIKE '%0021_token_scopes.sql'",
-            [],
-        )
-        .unwrap();
+        raw.execute_batch("CREATE TABLE runs (id TEXT PRIMARY KEY) STRICT")
+            .unwrap();
     }
-
-    let st = Store::open(path).unwrap();
-    let token = st
-        .authenticate_token(legacy)
-        .unwrap()
-        .expect("legacy token authenticates");
-    assert_eq!(token.scope, Scope::Read);
-    assert_ne!(token.id, legacy);
-    assert!(!token.id.is_empty());
-
-    let (id, hash): (String, String) = st
-        .with(|c| {
-            c.query_row("SELECT id, token_hash FROM read_tokens", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
-        })
-        .unwrap();
-    assert_ne!(id, legacy);
-    assert_eq!(hash, super::tokens::token_hash(legacy));
+    let err = match Store::open(path) {
+        Ok(_) => panic!("an unowned database must be refused"),
+        Err(err) => err,
+    };
+    let message = format!("{err:#}");
+    assert!(message.contains("no migration history"), "{message}");
+    assert!(message.contains("new database"), "{message}");
 }
 
 // ---------------------------------------------------------------------------
@@ -925,10 +1354,33 @@ fn sweep_purges_orphaned_full_text() {
         )
     })
     .unwrap();
-    assert_eq!(fts_row_count(&st), 2);
+    // The delete triggers purge the FTS rows with the steps; a standalone FTS
+    // table used to need a sweep-time cleanup pass for this.
+    assert_eq!(fts_row_count(&st), 0);
+
+    // A hand-written orphan (the only way one can now exist) is removed by the
+    // rebuild the sweep runs after VACUUM. `count(*)` on an external-content
+    // table counts content rows, so MATCH is what proves the orphan is there.
+    st.with(|c| {
+        c.execute(
+            "INSERT INTO steps_fts (rowid, name) VALUES (999, 'orphaned-message')",
+            [],
+        )
+    })
+    .unwrap();
+    assert_eq!(fts_match_count(&st, "orphaned"), 1);
+    st.upsert_steps(&step_with_msg(
+        "s1",
+        "run-old",
+        "Your order A-1042 has shipped today",
+        1000,
+    ))
+    .unwrap();
 
     st.sweep(ts(9000)).unwrap();
     assert_eq!(fts_row_count(&st), 0);
+    assert_eq!(fts_match_count(&st, "orphaned"), 0);
+    assert_eq!(fts_match_count(&st, "shipped"), 0);
     let filter = Filter {
         query: "shipped".to_string(),
         ..Filter::default()
@@ -1085,35 +1537,55 @@ fn backup_produces_valid_copy() {
 }
 
 #[test]
-fn auto_backup_before_migrate() {
+fn unknown_migration_history_is_refused_without_a_snapshot() {
     let dir = TempDir::new();
     let path = dir.join("up.db");
     let path = path.to_str().unwrap().to_string();
 
     let st = Store::open(&path).unwrap();
     st.upsert_steps(&sample_run("r1", 1000)).unwrap();
-    st.with(|c| {
-        c.execute(
-            "DELETE FROM schema_migrations WHERE name = (SELECT min(name) FROM schema_migrations)",
-            [],
-        )
-    })
-    .unwrap();
     drop(st);
 
-    assert_eq!(backup_files(&path).len(), 0);
-    assert!(
-        Store::open(&path).is_err(),
-        "re-applying 0001 must fail in this setup"
-    );
+    // A database from a build with a migration this one does not know: newer
+    // schema, or a foreign one. Refuse before writing anything, including a
+    // pre-migration snapshot (a refusal is not an upgrade).
+    {
+        let raw = rusqlite::Connection::open(&path).unwrap();
+        raw.execute(
+            "INSERT INTO schema_migrations (name, applied_ns) VALUES ('9999_future.sql', 0)",
+            [],
+        )
+        .unwrap();
+    }
 
-    let backups = backup_files(&path);
-    assert_eq!(backups.len(), 1);
-    let raw = rusqlite::Connection::open(&backups[0]).unwrap();
+    let err = match Store::open(&path) {
+        Ok(_) => panic!("a database with an unknown migration must be refused"),
+        Err(err) => err,
+    };
+    let message = format!("{err:#}");
+    assert!(message.contains("new database"), "{message}");
+    assert!(message.contains("9999_future.sql"), "{message}");
+    assert_eq!(backup_files(&path).len(), 0, "refusal must not snapshot");
+
+    // The refused database is untouched: the unknown marker and the user's
+    // data are still there, and no other migration ran.
+    let raw = rusqlite::Connection::open(&path).unwrap();
     let runs: i64 = raw
         .query_row("SELECT count(*) FROM runs", [], |r| r.get(0))
         .unwrap();
     assert_eq!(runs, 1);
+    let fake: i64 = raw
+        .query_row(
+            "SELECT count(*) FROM schema_migrations WHERE name = '9999_future.sql'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(fake, 1);
+    let applied: i64 = raw
+        .query_row("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(applied, 2, "refusal must not record a new migration");
 }
 
 #[test]
@@ -1253,6 +1725,7 @@ fn assertions_round_trip() {
     assert_eq!(st.list_assertions("default").unwrap().len(), 1);
     assert_eq!(st.list_assertions("other").unwrap().len(), 0);
 
+    st.upsert_steps(&sample_run("run-1", 1000)).unwrap();
     st.save_assertion_results(
         "default",
         "run-1",
@@ -1278,6 +1751,7 @@ fn assertions_round_trip() {
 #[test]
 fn shares_round_trip() {
     let st = TestStore::open();
+    st.upsert_steps(&sample_run("run-1", 1000)).unwrap();
     let token = st.create_share("default", "run-1").unwrap();
     assert_eq!(token.len(), 32);
     assert_eq!(
@@ -1357,6 +1831,19 @@ fn duplicate_writes_are_conflicts() {
     let params = serde_json::json!({});
     st.create_saved_view("dup", &params).unwrap();
     let err = st.create_saved_view("dup", &params).unwrap_err();
+    assert_eq!(err.downcast::<Error>().unwrap(), Error::Conflict);
+
+    let rule = Rule {
+        name: "dup".to_string(),
+        r#type: "error_rate".to_string(),
+        threshold: 0.5,
+        window_secs: 3600,
+        webhook_url: "https://example.com/hook".to_string(),
+        enabled: true,
+        ..Rule::default()
+    };
+    st.create_alert(rule.clone()).unwrap();
+    let err = st.create_alert(rule).unwrap_err();
     assert_eq!(err.downcast::<Error>().unwrap(), Error::Conflict);
 }
 

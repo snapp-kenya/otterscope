@@ -274,9 +274,19 @@ Two operational facts the manifest cannot hide:
 
 ### Pre-upgrade snapshot and restore
 
-The server already snapshots an existing database next to itself before
-applying pending migrations (`/data/otterscope.db.pre-migrate-<ns>.bak`, only
-the newest is kept). Take an explicit snapshot with a name you can find:
+> **Schema baseline.** This release starts from a new SQLite baseline
+> (`0001_initial.sql`, [ADR-0008](../docs/adr/0008-sqlite-schema-redesign.md)).
+> A database created by an older Otterscope build is **refused**, not
+> migrated in place: the pod exits with an error that says to start a new
+> database. There is no in-place upgrade path from a pre-baseline database;
+> keep its snapshot for the record, start a fresh volume and re-ingest, or
+> stay on the older image. Future schema changes after the baseline are still
+> new numbered migrations, and those do keep the snapshot-before-migrate
+> behaviour described here.
+
+The server snapshots an existing database next to itself before applying
+pending migrations (`/data/otterscope.db.pre-migrate-<ns>.bak`, only the newest
+is kept). Take an explicit snapshot with a name you can find:
 
 ```sh
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -311,9 +321,11 @@ kubectl -n otterscope get pods -w
 ```
 
 Readiness gates on `/healthz`; the startup probe allows up to 300 seconds for a
-large database to migrate. If migration fails, the pod crash-loops and the
-pre-migration snapshot is the recovery point. Keep the previous image tag and
-snapshot until the new version is confirmed.
+large database to migrate. If a post-baseline migration fails, the pod
+crash-loops and the pre-migration snapshot is the recovery point. A
+pre-baseline database is refused before any snapshot is written; keep the
+original file. Keep the previous image tag and snapshot until the new version
+is confirmed.
 
 ## Security posture
 

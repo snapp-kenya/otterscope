@@ -9,6 +9,8 @@ use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use crate::model::InvalidEnumValue;
+
 mod alerts;
 mod assertions;
 mod audit;
@@ -61,6 +63,18 @@ impl Scope {
         match self {
             Scope::Read => "read",
             Scope::Admin => "admin",
+        }
+    }
+}
+
+impl TryFrom<&str> for Scope {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: &str) -> std::result::Result<Self, InvalidEnumValue> {
+        match value {
+            "read" => Ok(Scope::Read),
+            "admin" => Ok(Scope::Admin),
+            other => Err(InvalidEnumValue::new("token scope", other)),
         }
     }
 }
@@ -169,14 +183,19 @@ impl Store {
         backup::secure_open(path)?;
         let conn = Connection::open(path)?;
         conn.busy_timeout(Duration::from_secs(5))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
         let store = Self {
             conn: Mutex::new(conn),
             path: path.to_string(),
         };
+        // Refuse a foreign/legacy database before switching the file to WAL:
+        // the refusal must not rewrite anything, not even the journal header.
         store.migrate()?;
+        {
+            let conn = store.lock()?;
+            conn.pragma_update(None, "journal_mode", "WAL")?;
+            conn.pragma_update(None, "synchronous", "NORMAL")?;
+        }
         backup::restrict_perms(path)?;
         Ok(store)
     }
@@ -199,15 +218,17 @@ impl Store {
     /// Apply pending migrations, snapshotting an existing database first.
     fn migrate(&self) -> anyhow::Result<()> {
         let conn = self.lock()?;
-        let (applied, pending) = migrate::state(&conn)?;
-        if pending > 0 && applied > 0 {
-            backup::backup_before_migrate(&conn, &self.path)?;
+        match migrate::plan(&conn)? {
+            migrate::Plan::UpToDate => {}
+            migrate::Plan::Fresh => migrate::apply(&conn)?,
+            migrate::Plan::Pending { applied, pending } => {
+                if migrate::needs_snapshot(applied, pending) {
+                    backup::backup_before_migrate(&conn, &self.path)?;
+                }
+                migrate::apply(&conn)?;
+            }
+            migrate::Plan::Unsupported(reason) => anyhow::bail!("{reason}"),
         }
-        migrate::apply(&conn)?;
-        // 0021 leaves pre-existing tokens to be hashed in Rust (SQLite has no
-        // SHA-256), and every legacy token must be retired before the store is
-        // handed out.
-        tokens::hash_legacy(&conn)?;
         Ok(())
     }
 
@@ -249,29 +270,11 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     out
 }
 
-pub(crate) fn parse_scope(scope: &str) -> Scope {
-    if scope == Scope::Admin.as_str() {
-        Scope::Admin
-    } else {
-        Scope::Read
-    }
-}
-
-pub(crate) fn parse_status(status: &str) -> crate::model::Status {
-    match status {
-        "ok" => crate::model::Status::Ok,
-        "error" => crate::model::Status::Error,
-        _ => crate::model::Status::Running,
-    }
-}
-
-pub(crate) fn parse_kind(kind: &str) -> crate::model::StepKind {
-    match kind {
-        "agent" => crate::model::StepKind::Agent,
-        "llm" => crate::model::StepKind::Llm,
-        "tool" => crate::model::StepKind::Tool,
-        _ => crate::model::StepKind::Generic,
-    }
+/// Wrap a constrained-column parse failure in the `rusqlite` error a row
+/// mapper has to return. The store never coerces an unknown enum to a
+/// default: a corrupt row is an error, not a silent `Running`/`Generic`.
+pub(crate) fn sql_enum_error(index: usize, err: InvalidEnumValue) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(err))
 }
 
 /// Map a SQLite write error to [`Error::Conflict`] when it is a uniqueness

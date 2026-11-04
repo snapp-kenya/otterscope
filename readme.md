@@ -142,7 +142,7 @@ claude mcp add otterscope --transport http http://localhost:8080/mcp
 - **Drop-in OTel compatibility** — normalizes the OTel GenAI conventions (both current dialects), OpenInference (OpenAI Agents SDK, CrewAI, LangChain), and the Vercel AI SDK. Raw payloads are retained, so old data benefits from future normalizer improvements.
 - **Ask your agent about itself** — a built-in [MCP server](docs/mcp.md) (`POST /mcp`, stateless revision `2026-07-28`) lets Claude Code and other MCP clients query your runs, steps, cost, and stats; it needs the same read token when `-read-auth` is on. `claude mcp add otterscope --transport http http://localhost/mcp` (substitute the port your deployment publishes).
 - **Projects + ingest keys** for isolating multiple agents; **API tokens** scoped read or admin (`otterscope token add`, `-admin` for one that may mutate) to script against your data or build external dashboards — enforce them with `serve -read-auth` when you expose the instance, which also makes an ingest key mandatory. Optional retention sweep (`-retention 720h`) if you *want* to delete data; it removes the full-text index rows with the runs and vacuums, so deleted content stops being searchable.
-- **Backups you can trust** — `otterscope backup -o snapshot.db` for a consistent copy (0600, like the database), and Otterscope auto-snapshots before applying any schema migration, keeping the newest one, so an upgrade can never leave you stranded. The database, its `-wal`/`-shm` siblings and a directory Otterscope creates for them are owner-only too.
+- **Backups you can trust** — `otterscope backup -o snapshot.db` for a consistent copy (0600, like the database), and Otterscope auto-snapshots before applying a pending migration after the schema baseline, keeping the newest one. (A database from the old pre-baseline schema is refused, not migrated; see the upgrade note below.) The database, its `-wal`/`-shm` siblings and a directory Otterscope creates for them are owner-only too.
 - **Prometheus metrics** at `/metrics` (runs, statuses, steps, DB size including WAL and SHM, firing alerts) — the observability tool is itself observable. With `-read-auth` it takes the same read token as the API.
 - **Export your data** — download the current filtered run set as CSV, or script the read API with a token. No lock-in.
 - **Audit log** — every create/delete of assertions, alerts, projects, tokens, views, and shares, from the UI, API, or CLI.
@@ -200,10 +200,13 @@ to deploy. SQLite comes from C, and the Linux release binaries link glibc
 2.39+ (Docker is the portable option), so "single binary" is the promise —
 not "fully static".
 
-Databases are plain SQLite and keep the same schema and append-only
-migrations, so an existing database opens without a conversion step. There is
-no byte-for-byte compatibility promise across releases: back up before
-switching from an older build.
+Databases are plain SQLite. The schema is a single `STRICT` baseline
+(`0001_initial.sql`) and future changes are new numbered migration files.
+There is no compatible older schema to carry forward: a database created by
+an older (Go-era or pre-baseline) Otterscope is refused rather than
+half-migrated, so start a new database and re-ingest. Back up before switching
+from any older build. See
+[docs/adr/0008-sqlite-schema-redesign.md](docs/adr/0008-sqlite-schema-redesign.md).
 
 Tests: `cd rust && cargo test` and `cd web && bun test`. Quality gates:
 `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D

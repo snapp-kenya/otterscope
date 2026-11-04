@@ -2,6 +2,13 @@
 
 Date: 2026-11-04 · Status: accepted · Amends: ADR-0001, ADR-0004
 
+> **Amended by [ADR-0008](0008-sqlite-schema-redesign.md).** Decision point 3
+> and the "schema-compatible" wording in point 6 described the port as
+> preserving the Go schema. That compatibility promise is withdrawn: the Go
+> implementation is gone and ADR-0008 replaces the schema with a single
+> `STRICT` baseline and refuses pre-baseline databases. The rest of this ADR
+> still stands.
+
 ## Context
 Otterscope's product constraint is operational weight, not a language: one self-contained binary, one SQLite file, no external services (ADR-0001). The Go implementation proved the product and the ingest model, but it carried avoidable costs. The pure-Go SQLite driver (`modernc.org/sqlite`) was roughly twice as slow as CGO sqlite3 on some workloads; the alternative, CGO, would have broken the easy static build. The garbage collector and runtime footprint set a floor on latency and memory during ingest, exactly where a single-writer SQLite store is most sensitive. And the SQLite driver, OTLP/protobuf decoding and HTTP stack were three separate dependency families to keep current.
 

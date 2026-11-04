@@ -2,24 +2,28 @@
 
 use rusqlite::params;
 
-use crate::evals::{Assertion, Result as EvalResult};
+use crate::evals::{Assertion, AssertionKind, Result as EvalResult};
 
 use super::now_ns;
 
 impl super::Store {
-    /// Store a new assertion (already validated by the caller).
+    /// Store a new assertion (already validated by the caller). The type is
+    /// decoded through [`AssertionKind`] so an unknown value is refused here
+    /// as well as by the schema's CHECK constraint.
     pub fn create_assertion(&self, mut assertion: Assertion) -> anyhow::Result<Assertion> {
         if assertion.project.is_empty() {
             assertion.project = "default".to_string();
         }
+        let kind = assertion.kind().map_err(|err| anyhow::anyhow!("{err}"))?;
         let conn = self.lock()?;
+        super::projects::ensure_project(&conn, &assertion.project)?;
         conn.execute(
             "INSERT INTO assertions (project, name, type, config, enabled, created_ns)
              VALUES (?,?,?,?,?,?)",
             params![
                 assertion.project,
                 assertion.name,
-                assertion.r#type,
+                kind.as_str(),
                 assertion.config,
                 assertion.enabled,
                 now_ns()
@@ -43,11 +47,14 @@ impl super::Store {
         };
         let mut stmt = conn.prepare(&sql)?;
         let map = |row: &rusqlite::Row<'_>| {
+            let raw_type: String = row.get(3)?;
+            let kind = AssertionKind::try_from(raw_type.as_str())
+                .map_err(|err| super::sql_enum_error(3, err))?;
             Ok(Assertion {
                 id: row.get(0)?,
                 project: row.get(1)?,
                 name: row.get(2)?,
-                r#type: row.get(3)?,
+                r#type: kind.as_str().to_string(),
                 config: row.get(4)?,
                 enabled: row.get(5)?,
             })
@@ -64,26 +71,20 @@ impl super::Store {
         Ok(assertions)
     }
 
-    /// Remove an assertion and its results. False means there was nothing to
-    /// remove.
+    /// Remove an assertion. Its results go with it through the foreign key's
+    /// ON DELETE CASCADE. False means there was nothing to remove.
     pub fn delete_assertion(&self, id: i64) -> anyhow::Result<bool> {
         let conn = self.lock()?;
-        let tx = conn.unchecked_transaction()?;
-        tx.execute(
-            "DELETE FROM assertion_results WHERE assertion_id = ?",
-            params![id],
-        )?;
-        if tx.execute("DELETE FROM assertions WHERE id = ?", params![id])? == 0 {
-            // Dropping the transaction rolls back the results delete too.
+        if conn.execute("DELETE FROM assertions WHERE id = ?", params![id])? == 0 {
             return Ok(false);
         }
-        tx.commit()?;
         super::audit::record(&conn, "delete", "assertion", &id.to_string());
         Ok(true)
     }
 
     /// Upsert results for one run in one project. Project is required: a trace
-    /// id alone does not identify a run.
+    /// id alone does not identify a run, and the foreign key refuses a result
+    /// for a run or assertion that does not exist.
     pub fn save_assertion_results(
         &self,
         project: &str,
@@ -103,8 +104,12 @@ impl super::Store {
         let now = now_ns();
         for result in results {
             tx.execute(
-                "INSERT OR REPLACE INTO assertion_results (project, run_id, assertion_id, pass, detail, evaluated_ns)
-                 VALUES (?,?,?,?,?,?)",
+                "INSERT INTO assertion_results (project, run_id, assertion_id, pass, detail, evaluated_ns)
+                 VALUES (?,?,?,?,?,?)
+                 ON CONFLICT(project, run_id, assertion_id) DO UPDATE SET
+                   pass = excluded.pass,
+                   detail = excluded.detail,
+                   evaluated_ns = excluded.evaluated_ns",
                 params![
                     project,
                     run_id,
@@ -133,10 +138,13 @@ impl super::Store {
              WHERE r.project = ? AND r.run_id = ? ORDER BY r.assertion_id",
         )?;
         let rows = stmt.query_map(params![project, run_id], |row| {
+            let raw_type: String = row.get(2)?;
+            let kind = AssertionKind::try_from(raw_type.as_str())
+                .map_err(|err| super::sql_enum_error(2, err))?;
             Ok(EvalResult {
                 assertion_id: row.get(0)?,
                 name: row.get(1)?,
-                r#type: row.get(2)?,
+                r#type: kind.as_str().to_string(),
                 pass: row.get(3)?,
                 detail: row.get(4)?,
             })

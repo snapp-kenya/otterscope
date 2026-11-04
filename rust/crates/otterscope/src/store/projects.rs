@@ -2,9 +2,35 @@
 
 use anyhow::Context;
 use chrono::Utc;
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
-use super::{Project, datetime, nanos, random_hex};
+use super::{Project, datetime, nanos, now_ns, random_hex};
+
+/// Make sure a project row exists so a child row's foreign key can point at
+/// it. Production resolves projects from ingest keys, so this is normally a
+/// no-op; it keeps direct store use (tests, renormalization, a project named
+/// by an assertion/alert before ingest starts) working without letting an
+/// orphan child through.
+pub(crate) fn ensure_project(conn: &Connection, name: &str) -> anyhow::Result<()> {
+    if name == "default" {
+        return Ok(());
+    }
+    // Read first: a named project is normally present, and ingest should not
+    // attempt a write (and allocate a key) on every batch.
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM projects WHERE name = ?1)",
+        params![name],
+        |row| row.get(0),
+    )?;
+    if exists {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO projects (name, ingest_key, created_ns) VALUES (?,?,?)",
+        params![name, random_hex(16)?, now_ns()],
+    )?;
+    Ok(())
+}
 
 impl super::Store {
     /// Add a project with a fresh random ingest key and return it.

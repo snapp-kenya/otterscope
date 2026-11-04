@@ -14,7 +14,7 @@ impl super::Store {
         let text = serde_json::to_string(params)?;
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO saved_views (name, params, created_ns) VALUES (?,?,?)",
+            "INSERT INTO saved_views (name, params_json, created_ns) VALUES (?,?,?)",
             params![name, text, now_ns()],
         )
         .map_err(super::classify_write)?;
@@ -30,7 +30,7 @@ impl super::Store {
     /// All views, oldest first.
     pub fn list_saved_views(&self) -> anyhow::Result<Vec<SavedView>> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare("SELECT id, name, params FROM saved_views ORDER BY id")?;
+        let mut stmt = conn.prepare("SELECT id, name, params_json FROM saved_views ORDER BY id")?;
         let rows = stmt.query_map([], |row| {
             let text: String = row.get(2)?;
             Ok(SavedView {

@@ -10,7 +10,7 @@ impl super::Store {
         let token = random_hex(16)?;
         let conn = self.lock()?;
         conn.execute(
-            "INSERT INTO shared_runs (token, project, run_id, created_ns) VALUES (?,?,?,?)",
+            "INSERT INTO shares (token, project, run_id, created_ns) VALUES (?,?,?,?)",
             params![token, project, run_id, now_ns()],
         )?;
         super::audit::record(&conn, "create", "share", run_id);
@@ -22,7 +22,7 @@ impl super::Store {
         let conn = self.lock()?;
         Ok(conn
             .query_row(
-                "SELECT project, run_id FROM shared_runs WHERE token = ?",
+                "SELECT project, run_id FROM shares WHERE token = ?",
                 params![token],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -33,7 +33,7 @@ impl super::Store {
     pub fn shares_for_run(&self, project: &str, run_id: &str) -> anyhow::Result<Vec<Share>> {
         let conn = self.lock()?;
         let mut stmt = conn.prepare(
-            "SELECT token, created_ns FROM shared_runs WHERE project = ? AND run_id = ? ORDER BY created_ns",
+            "SELECT token, created_ns FROM shares WHERE project = ? AND run_id = ? ORDER BY created_ns",
         )?;
         let rows = stmt.query_map(params![project, run_id], |row| {
             let created_ns: i64 = row.get(1)?;
@@ -53,7 +53,7 @@ impl super::Store {
     /// nothing is audited.
     pub fn delete_share(&self, token: &str) -> anyhow::Result<bool> {
         let conn = self.lock()?;
-        if conn.execute("DELETE FROM shared_runs WHERE token = ?", params![token])? == 0 {
+        if conn.execute("DELETE FROM shares WHERE token = ?", params![token])? == 0 {
             return Ok(false);
         }
         super::audit::record(&conn, "delete", "share", &super::short_token(token));

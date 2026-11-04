@@ -37,7 +37,10 @@ procedure for a change is [`workflow.md`](workflow.md).
 - `rust/crates/otterscope/src/store/` — SQLite persistence via `rusqlite`
   (`bundled`, so SQLite is compiled into the binary). Migrations live in
   `rust/crates/otterscope/migrations/`, are embedded with `include_str!`, and
-  are sequential and append-only. One connection behind a mutex.
+  are sequential and append-only after the `0001_initial.sql` baseline. The
+  baseline is `STRICT` with cascading foreign keys and `CHECK`-constrained
+  enums (ADR-0008); a database from the old pre-baseline schema is refused,
+  not upgraded. One connection behind a mutex.
 - `rust/crates/otterscope/src/server/` — axum router: JSON API (contract in
   [`api-rust.md`](api-rust.md)), auth/guard, Prometheus metrics, SSE stream,
   judge evaluator, and the embedded UI (`rust-embed` reads `web/dist`).
@@ -63,7 +66,11 @@ procedure for a change is [`workflow.md`](workflow.md).
   `src/model`.
 - **SQLite schema changes only via new migration files.** Never edit an existing
   migration. A database migrated by a newer version cannot be opened by an older
-  one, so `Store::open` snapshots before applying pending migrations.
+  one, so `Store::open` snapshots before applying pending migrations. A
+  database from the old pre-baseline schema, or any database with an unknown
+  migration history, is refused with an explicit message — do not add an
+  in-place upgrade for it; start a new database instead
+  ([ADR-0008](adr/0008-sqlite-schema-redesign.md)).
 - **No breaking changes to the ingest endpoint** once released; agents in the
   wild must not lose data because we refactored.
 - **The store runs on a SINGLE SQLite connection.** Never hold a rows cursor open

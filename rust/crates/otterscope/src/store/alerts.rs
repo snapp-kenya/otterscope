@@ -3,7 +3,7 @@
 
 use rusqlite::params;
 
-use crate::alerts::Rule;
+use crate::alerts::{AlertKind, Rule};
 
 use super::now_ns;
 
@@ -11,19 +11,23 @@ const ALERT_COLUMNS: &str = "id, project, name, type, threshold, window_secs, co
      enabled, firing, settle_secs, pending_since_ns";
 
 impl super::Store {
-    /// Store an already-validated alert rule.
+    /// Store an already-validated alert rule. The type is decoded through
+    /// [`AlertKind`] so a caller cannot persist a value the schema does not
+    /// allow (the CHECK constraint is the second line of defence).
     pub fn create_alert(&self, mut rule: Rule) -> anyhow::Result<Rule> {
         if rule.project.is_empty() {
             rule.project = "default".to_string();
         }
+        let kind = rule.kind().map_err(|err| anyhow::anyhow!("{err}"))?;
         let conn = self.lock()?;
+        super::projects::ensure_project(&conn, &rule.project)?;
         conn.execute(
             "INSERT INTO alerts (project, name, type, threshold, window_secs, config, webhook_url, enabled, settle_secs, created_ns)
              VALUES (?,?,?,?,?,?,?,?,?,?)",
             params![
                 rule.project,
                 rule.name,
-                rule.r#type,
+                kind.as_str(),
                 rule.threshold,
                 rule.window_secs,
                 rule.config,
@@ -73,12 +77,12 @@ impl super::Store {
         let conn = self.lock()?;
         if firing {
             conn.execute(
-                "UPDATE alerts SET firing = 1, last_fired_ns = ?, pending_since_ns = 0 WHERE id = ?",
+                "UPDATE alerts SET firing = 1, last_fired_ns = ?, pending_since_ns = NULL WHERE id = ?",
                 params![now_ns(), id],
             )?;
         } else {
             conn.execute(
-                "UPDATE alerts SET firing = 0, pending_since_ns = 0 WHERE id = ?",
+                "UPDATE alerts SET firing = 0, pending_since_ns = NULL WHERE id = ?",
                 params![id],
             )?;
         }
@@ -88,10 +92,11 @@ impl super::Store {
     /// Record when a rule's condition flipped away from the last notified
     /// state; 0 clears it (the condition flapped back before settling).
     pub fn set_alert_pending(&self, id: i64, ns: i64) -> anyhow::Result<()> {
+        let pending = (ns != 0).then_some(ns);
         let conn = self.lock()?;
         conn.execute(
             "UPDATE alerts SET pending_since_ns = ? WHERE id = ?",
-            params![ns, id],
+            params![pending, id],
         )?;
         Ok(())
     }
@@ -114,11 +119,14 @@ fn query_alerts(
 ) -> anyhow::Result<Vec<Rule>> {
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(args, |row| {
+        let raw_type: String = row.get(3)?;
+        let kind =
+            AlertKind::try_from(raw_type.as_str()).map_err(|err| super::sql_enum_error(3, err))?;
         Ok(Rule {
             id: row.get(0)?,
             project: row.get(1)?,
             name: row.get(2)?,
-            r#type: row.get(3)?,
+            r#type: kind.as_str().to_string(),
             threshold: row.get(4)?,
             window_secs: row.get(5)?,
             config: row.get(6)?,
@@ -126,7 +134,7 @@ fn query_alerts(
             enabled: row.get(8)?,
             firing: row.get(9)?,
             settle_secs: row.get(10)?,
-            pending_since_ns: row.get(11)?,
+            pending_since_ns: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
         })
     })?;
     let mut alerts = Vec::new();

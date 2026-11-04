@@ -160,7 +160,7 @@ async fn evaluate_runs_with_budget(
         };
         let mut results = Vec::new();
         for assertion in &assertions {
-            if assertion.r#type == "llm_judge" {
+            if matches!(assertion.kind(), Ok(evals::AssertionKind::LlmJudge)) {
                 if judged.contains(&assertion.id) {
                     continue;
                 }

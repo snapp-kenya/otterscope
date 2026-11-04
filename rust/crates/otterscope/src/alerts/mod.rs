@@ -7,6 +7,7 @@
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::model::InvalidEnumValue;
 use crate::store::Stats;
 
 mod watcher;
@@ -20,6 +21,50 @@ pub use webhook::{
 
 /// Bounds the flap-suppression window (24h).
 pub const MAX_SETTLE_SECS: i64 = 24 * 60 * 60;
+
+/// The alert metrics the watcher can evaluate. The database CHECK constraint
+/// and this enum must agree; the store decodes rows through [`AlertKind`] so
+/// an invalid value cannot round-trip into a [`Rule`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertKind {
+    ErrorRate,
+    Cost,
+    P95Latency,
+    AssertionFailRate,
+}
+
+impl AlertKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AlertKind::ErrorRate => "error_rate",
+            AlertKind::Cost => "cost",
+            AlertKind::P95Latency => "p95_latency",
+            AlertKind::AssertionFailRate => "assertion_fail_rate",
+        }
+    }
+}
+
+impl TryFrom<&str> for AlertKind {
+    type Error = InvalidEnumValue;
+
+    fn try_from(value: &str) -> std::result::Result<Self, InvalidEnumValue> {
+        match value {
+            "error_rate" => Ok(AlertKind::ErrorRate),
+            "cost" => Ok(AlertKind::Cost),
+            "p95_latency" => Ok(AlertKind::P95Latency),
+            "assertion_fail_rate" => Ok(AlertKind::AssertionFailRate),
+            other => Err(InvalidEnumValue::new("alert type", other)),
+        }
+    }
+}
+
+impl Rule {
+    /// Decode the stored/wire spelling into the typed kind.
+    pub fn kind(&self) -> std::result::Result<AlertKind, InvalidEnumValue> {
+        AlertKind::try_from(self.r#type.as_str())
+    }
+}
 
 /// One alert definition. The store persists it; this module owns the behaviour
 /// (validate, evaluate, notify).
@@ -75,21 +120,24 @@ pub async fn validate(rule: &Rule) -> Result<()> {
             MAX_SETTLE_SECS
         );
     }
-    match rule.r#type.as_str() {
-        "error_rate" | "assertion_fail_rate" => {
+    let kind = match rule.kind() {
+        Ok(kind) => kind,
+        Err(_) => bail!("unknown alert type {:?}", rule.r#type),
+    };
+    match kind {
+        AlertKind::ErrorRate | AlertKind::AssertionFailRate => {
             if !(0.0..=1.0).contains(&rule.threshold) {
                 bail!("{} threshold is a fraction 0..1", rule.r#type);
             }
-            if rule.r#type == "assertion_fail_rate" && rule.config.is_empty() {
+            if kind == AlertKind::AssertionFailRate && rule.config.is_empty() {
                 bail!("assertion_fail_rate needs config = assertion name");
             }
         }
-        "cost" | "p95_latency" => {
+        AlertKind::Cost | AlertKind::P95Latency => {
             if rule.threshold <= 0.0 {
                 bail!("{} threshold must be positive", rule.r#type);
             }
         }
-        other => bail!("unknown alert type {other:?}"),
     }
     Ok(())
 }
@@ -116,8 +164,11 @@ impl Evaluation {
 /// Computes whether the rule is currently firing over `stats`, plus a
 /// human-readable detail.
 pub fn evaluate(rule: &Rule, stats: &Stats) -> Evaluation {
-    match rule.r#type.as_str() {
-        "error_rate" => {
+    let Ok(kind) = rule.kind() else {
+        return Evaluation::unknown();
+    };
+    match kind {
+        AlertKind::ErrorRate => {
             if stats.runs == 0 {
                 return Evaluation::unknown();
             }
@@ -133,7 +184,7 @@ pub fn evaluate(rule: &Rule, stats: &Stats) -> Evaluation {
                 ),
             }
         }
-        "cost" => {
+        AlertKind::Cost => {
             let Some(cost) = stats.total_cost_usd else {
                 return Evaluation::unknown();
             };
@@ -146,7 +197,7 @@ pub fn evaluate(rule: &Rule, stats: &Stats) -> Evaluation {
                 ),
             }
         }
-        "p95_latency" => {
+        AlertKind::P95Latency => {
             if stats.runs == 0 {
                 return Evaluation::unknown();
             }
@@ -159,7 +210,7 @@ pub fn evaluate(rule: &Rule, stats: &Stats) -> Evaluation {
                 ),
             }
         }
-        "assertion_fail_rate" => {
+        AlertKind::AssertionFailRate => {
             let Some(rate) = stats.assertion_rates.iter().find(|a| a.name == rule.config) else {
                 return Evaluation::unknown();
             };
@@ -180,7 +231,6 @@ pub fn evaluate(rule: &Rule, stats: &Stats) -> Evaluation {
                 ),
             }
         }
-        _ => Evaluation::unknown(),
     }
 }
 

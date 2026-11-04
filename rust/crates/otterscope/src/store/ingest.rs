@@ -15,6 +15,8 @@ impl super::Store {
     pub fn ingest_batch(&self, project: &str, raw: &[u8], steps: &[Step]) -> anyhow::Result<usize> {
         let conn = self.lock()?;
         let tx = conn.unchecked_transaction()?;
+        // A batch is project-scoped even when it normalizes to no steps.
+        super::projects::ensure_project(&tx, project)?;
         let rejected = upsert_steps_tx(&tx, steps)?;
         if !steps.is_empty() && rejected == steps.len() {
             // Nothing was written; keep no replayable copy of a refused batch.
