@@ -8,9 +8,9 @@ binary + SQLite (no ClickHouse stack)
 If you run LLM agents and want to see what they're doing without shipping
 your prompts to a SaaS — I built Otterscope for exactly that.
 
-- **Deploy:** one static binary (`./otterscope serve`) or one Docker
+- **Deploy:** one self-contained binary (`./otterscope serve`) or one Docker
   container. Data is a single SQLite file in a volume. That's the whole
-  stack.
+  stack. (The Linux binary links glibc 2.39+; Docker is the portable option.)
 - **Ingest:** standard OpenTelemetry — works with Pydantic AI, OpenAI
   Agents SDK, LangGraph, Vercel AI SDK, the Claude Agent SDK, or
   hand-rolled OTLP.

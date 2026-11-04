@@ -15,7 +15,7 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1   # required for spans
 export OTEL_TRACES_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost
 export OTEL_SERVICE_NAME=my-agent              # default is "claude-code"
 
 # only when you created a project key:
@@ -26,13 +26,14 @@ export OTEL_LOG_TOOL_DETAILS=1
 export OTEL_LOG_TOOL_CONTENT=1
 ```
 
-That is the whole integration — run your agent and the run appears at
-http://localhost:8317.
+That is the whole integration — run your agent and the run appears at the
+server's UI (port 80; substitute the host port your deployment publishes,
+e.g. http://localhost:8080).
 
 Set `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` only if you also run a
-metrics/logs backend. Otterscope ingests traces; it does not accept the
-metrics or logs protocols, and pointing them at `:4318` just logs export
-errors.
+metrics or logs backend. Otterscope ingests traces; it does not accept the
+metrics or logs protocols, and pointing them at the trace endpoint just logs
+export errors.
 
 ## From Python or TypeScript
 
@@ -47,7 +48,7 @@ OTEL = {
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
     "OTEL_TRACES_EXPORTER": "otlp",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
-    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost",
     "OTEL_SERVICE_NAME": "my-agent",
     # short scripts exit before the default 5s export tick
     "OTEL_TRACES_EXPORT_INTERVAL": "1000",

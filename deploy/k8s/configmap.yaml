@@ -1,0 +1,34 @@
+# Runtime configuration. These are the documented OTTERSCOPE_* environment
+# variables, so the CLI subcommands run through `kubectl exec` see the same
+# database path without repeating -db.
+#
+# There is no listener/port setting: this build always serves the UI, API,
+# /mcp, /healthz, share links and OTLP ingest on port 80. Exposure is the
+# Service/Ingress's decision, not application configuration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otterscope-config
+  labels:
+    app.kubernetes.io/name: otterscope
+data:
+  # The PVC is mounted at /data. Keep the database at its root so the automatic
+  # pre-migration snapshot next to it is also on the PVC.
+  OTTERSCOPE_DB: "/data/otterscope.db"
+
+  # 30 days. Set "0" for unlimited retention, and raise the PVC size to match.
+  OTTERSCOPE_RETENTION: "720h"
+
+  # Empty means the app is mounted at /. Set this (and rebuild the image with
+  # --build-arg OTTERSCOPE_BASE_PATH=<same value>, and update the probe paths)
+  # only when using the optional path-based Ingress.
+  OTTERSCOPE_BASE_PATH: ""
+
+  # Required outside loopback. UI/API need a Bearer token, OTLP needs a project
+  # ingest key. Mint both against the PVC with `kubectl exec` (deploy/README.md).
+  OTTERSCOPE_READ_AUTH: "true"
+
+  # Browser Origin/Host allow-list. Empty accepts loopback and IP literals
+  # only; set it to the external origin when serving through an Ingress, e.g.
+  # "https://otterscope.example.com".
+  OTTERSCOPE_ALLOWED_ORIGINS: ""

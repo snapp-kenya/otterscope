@@ -39,11 +39,11 @@ The Show HN and r/selfhosted posts have no such gate.
 name: Otterscope
 website_url: https://github.com/otterscope/otterscope
 source_code_url: https://github.com/otterscope/otterscope
-description: Observability and evals for AI agents — run timelines, token and cost tracking, assertions and LLM-as-judge scoring over OpenTelemetry traces. Single Go binary with embedded SQLite. (alternative to Langfuse, Arize Phoenix)
+description: Observability and evals for AI agents — run timelines, token and cost tracking, assertions and LLM-as-judge scoring over OpenTelemetry traces. Single Rust binary with embedded SQLite. (alternative to Langfuse, Arize Phoenix)
 licenses:
   - Apache-2.0
 platforms:
-  - Go
+  - Rust
   - Docker
 tags:
   - Generative Artificial Intelligence (GenAI)
@@ -56,7 +56,7 @@ Notes on the fields, from their guidelines:
 - Prefer the short form ("Observability and evals for…", not "Otterscope is a…").
 - `(alternative to …)` is their convention for positioning against an existing
   product, which is how the README already frames the project.
-- `Go` is listed because the project ships a single static binary, and their
-  guidelines ask for the language in that case.
+- `Rust` is listed because the project ships a single self-contained binary,
+  and their guidelines ask for the language in that case.
 - Leave out `stargazers_count`, `updated_at`, `current_release` and
   `commit_history` — their tooling fills those in.

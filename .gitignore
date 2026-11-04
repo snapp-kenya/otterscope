@@ -1,14 +1,10 @@
-# binaries
-/otterscope
-/dist/
-
 # data
 *.db
 *.db-wal
 *.db-shm
 
-# frontend — dist is embedded via go:embed, so .gitkeep must exist for
-# `go build ./...` to compile without a prior frontend build
+# frontend — dist is embedded at compile time by rust-embed, so it is not
+# committed; build it with `bun run build` before the binary
 web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
@@ -17,3 +13,7 @@ web/dist/*
 .idea/
 .vscode/
 .DS_Store
+
+# rust
+rust/target/
+.worktrees/

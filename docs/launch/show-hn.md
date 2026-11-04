@@ -10,7 +10,7 @@ made things worse. The self-hostable options wanted a ClickHouse + Redis +
 S3 stack for what is, at my scale, a few thousand LLM calls a day; the
 hosted ones want my users' conversations on their servers.
 
-So: Otterscope. One static Go binary, one SQLite file. You point any
+So: Otterscope. One self-contained Rust binary, one SQLite file. You point any
 OpenTelemetry-instrumented agent at it (`OTEL_EXPORTER_OTLP_ENDPOINT`) and
 get an agent-run-first view — runs → steps → LLM/tool calls with messages,
 tokens, and cost — plus assertions and LLM-as-judge evals scored onto real

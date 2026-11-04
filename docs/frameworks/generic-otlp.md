@@ -1,6 +1,7 @@
 # Any framework / hand-rolled agents → Otterscope
 
-Otterscope accepts standard OTLP/HTTP on `:4318` and understands the
+Otterscope accepts standard OTLP/HTTP on its single port-80 listener
+(`POST /v1/traces`; the same listener serves the UI and API) and understands the
 OpenTelemetry GenAI semantic conventions (both the current and the
 `gen_ai_latest_experimental` attribute dialects) plus OpenInference.
 
