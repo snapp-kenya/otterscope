@@ -80,8 +80,7 @@ shell:
 
 ## Avoid
 1. uppercase anything
-2. complex shell scripting in recipes, use a script file instead (in a script
-   folder)
+2. complex shell scripting in recipes, use a script file instead
 3. file-based targets (everything is .PHONY)
 4. tab/space mixing (use tabs, not spaces, for recipe indentation)
 5. deeply nested variable references
