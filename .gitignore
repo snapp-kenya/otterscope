@@ -17,3 +17,6 @@ web/dist/*
 # rust
 rust/target/
 .worktrees/
+
+# release archives from scripts/release.sh
+/dist/

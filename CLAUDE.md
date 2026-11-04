@@ -36,12 +36,19 @@ Lightweight, self-hosted observability + evals for AI agents. One self-contained
 - Rust 1.99.1 (pinned in `rust-toolchain.toml`, with rustfmt and clippy), Bun for `web/`.
 - Build the UI first, then the binary: `cd web && bun install && bun run build`, then `cd rust && cargo build --release`. The binary is `rust/target/release/otterscope`.
 - Build without the UI: `cargo build` (or `cargo build --release`) works because `build.rs` creates a placeholder `web/dist/index.html`; the API, OTLP receiver and `/mcp` run, the UI page says it was built without one.
-- Test: `cd rust && cargo test` · `cd web && bun test`. Lint/format: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cd web && bun run lint`.
+- The whole gate is local (there is no CI; see below): `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` in `rust/`; `bun run lint`, `bun test`, `bun run build` in `web/`.
 - Run locally: `cd rust && cargo run -- serve` (or `./target/release/otterscope serve`). The process always binds port 80, so it needs root, `CAP_NET_BIND_SERVICE` on Linux, or the container; UI, API, `/mcp` and OTLP ingest (`POST /v1/traces`) all share that one port.
 - README screenshots are generated, not hand-taken: seed a db (`cargo run -- sample`), serve it on the fixed port 80 (a container published as `-p 8080:80` is the easy way; there is no `-listen` knob), then `cd web && OTERSCOPE_URL=http://localhost:8080 bun run screenshots`. The script defaults to `http://localhost:8324`, so pass `OTERSCOPE_URL` unless the server is on host port 80. That script is the only consumer of the `playwright` devDependency — it was once deleted as "unused" (#124), so keep the script and the dependency together. The version comes from `Cargo.toml` (`CARGO_PKG_VERSION`), so bump the workspace version before regenerating release screenshots.
 - Test fixtures for ingest live in `rust/crates/otterscope/testdata/` as captured OTLP JSON/protobuf payloads from real frameworks — extend these whenever a new framework/dialect quirk is found.
-- Any command whose exit code gates a decision (tests, builds, `gh pr checks`, `gh run watch`) must not be piped through `tail`/`grep`/etc. without `set -o pipefail` — a pipe masks the failure and the gate silently passes (this has bitten twice: PR #21 locally, PR #30 at merge). Bound any command that can hang so a stalled test fails fast.
-- CI check failures aren't always code failures — registry/proxy flakes happen (PR #30). Re-run the failed job (`gh run rerun <id> --failed`) before debugging, but never merge on a red check regardless of suspected cause. CI is `.github/workflows/rust.yml`; releases come from `.github/workflows/release.yml`.
+- Any command whose exit code gates a decision (tests, builds, the local gate below) must not be piped through `tail`/`grep`/etc. without `set -o pipefail` — a pipe masks the failure and the gate silently passes (this has bitten twice: PR #21 locally, PR #30 before the port). Bound any command that can hang so a stalled test fails fast.
+- **There is no CI.** GitHub Actions was removed by operator decision: `.github/workflows/` does not exist and must not be re-added, and no other CI service replaces it. Every gate is run locally, from a clean tree, before merge:
+
+  ```sh
+  cd rust && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test
+  cd web && bun run lint && bun test && bun run build
+  ```
+
+  Do not merge if any of the six fails. A flaky failure is still a failure: re-run the command, then debug; there is no job to re-run. Releases are built and published manually with `scripts/release.sh` (see `docs/packaging.md`).
 
 ## Workflow
 

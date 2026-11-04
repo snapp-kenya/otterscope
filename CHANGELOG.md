@@ -88,9 +88,13 @@ commit history has the rest.
 - The frozen Go implementation (`cmd/`, `internal/`, `go.mod`, `go.sum`,
   `web/embed.go`) and its manual reference-only workflow
   (`.github/workflows/ci.yml`) are deleted; the Rust workspace is now the only
-  implementation. CI is `.github/workflows/rust.yml` and releases come from
-  `.github/workflows/release.yml`. Existing SQLite databases still open
-  without a conversion step.
+  implementation. Existing SQLite databases still open without a conversion
+  step.
+- GitHub Actions is gone. The remaining workflows (`.github/workflows/rust.yml`
+  and `.github/workflows/release.yml`) are deleted and no CI service replaces
+  them. The six quality gates are run locally before merge, and releases are
+  built and published manually with `scripts/release.sh` (see
+  [docs/packaging.md](docs/packaging.md)); release artifacts are unsigned.
 
 ### Fixed
 

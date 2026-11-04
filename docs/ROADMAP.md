@@ -18,9 +18,9 @@ Model-pricing table (maintained, overridable) → per-call/per-run cost; filter/
 Assertions (contains/regex/JSON-schema/latency/cost thresholds) and LLM-as-judge scoring over captured runs; score storage on the run; comparison view (this week vs last, version A vs B). Exit criterion: "did my prompt change make things worse?" answerable in-product.
 
 ## M5 — Ship it (Sep 14 – Sep 28)
-Release pipeline per ADR-0004, retargeted to the Rust workspace: tag-triggered builds → GitHub Releases binaries (linux amd64/arm64, darwin arm64, windows amd64), multi-arch Docker image on GHCR (distroless base), `docker-compose.yml` example; install docs; demo instance with sample data; README polish with screenshots/GIF; docs for each supported framework. Homebrew, deb/rpm, darwin amd64, windows arm64 and signing remain deferred (`docs/packaging.md`). Launch: Show HN + r/selfhosted + awesome-selfhosted PR.
+Manual release process per ADR-0004, retargeted to the Rust workspace: `scripts/release.sh` builds the native archives on matching hosts (linux amd64/arm64, darwin arm64, windows amd64), and the multi-arch Docker image is built and pushed manually to GHCR (distroless base), plus a `docker-compose.yml` example; install docs; demo instance with sample data; README polish with screenshots/GIF; docs for each supported framework. There is no CI; the gate and the release steps are documented in `CLAUDE.md` and `docs/packaging.md`. Homebrew, deb/rpm, darwin amd64, windows arm64 and signing remain deferred (`docs/packaging.md`). Launch: Show HN + r/selfhosted + awesome-selfhosted PR.
 
-The release pipeline itself is built early (during M1, exercised with `v0.0.x` pre-releases) so packaging is proven long before launch, not bolted on at the end.
+The release process is exercised with `v0.0.x` pre-releases so packaging is proven before launch, not bolted on at the end.
 
 ## Later / explicitly deferred
 - DuckDB/Parquet analytics sidecar for large volumes (ADR-0002 keeps SQLite until proven insufficient)

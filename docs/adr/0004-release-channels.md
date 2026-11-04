@@ -25,23 +25,23 @@ Deferred until users ask: Windows signing/Scoop/winget, apt/yum hosted repos, Ni
 
 ## Amendment (2026-11-04): what actually ships
 
-The body above is the original Go-era decision and is kept as history. After the Rust port (ADR-0006), the release workflow is `.github/workflows/release.yml`; it is the source of truth for this amendment, and `docs/packaging.md` records the current gaps.
+The body above is the original Go-era decision and is kept as history. After the Rust port (ADR-0006), releases are **built and published manually; there is no CI**. The GitHub Actions workflows were deleted by operator decision, and `scripts/release.sh` plus `docs/packaging.md` are the source of truth for this amendment.
 
 **Shipping today:**
 
-1. **GitHub Releases** — four native archives, not five platforms and not static binaries: linux amd64, linux arm64, darwin arm64 and windows amd64. Each archive contains the `otterscope` binary, `LICENSE` and `README.md`. There are no separate checksum files and no signing.
-2. **Docker image on GHCR** — one multi-arch `ghcr.io/otterscope/otterscope` image for linux/amd64 and linux/arm64, tagged `latest` and `X.Y.Z`. The runtime is distroless `cc-debian12:nonroot` (uid 65532, `/data` as the only writable path), not `FROM scratch`; the body's `X.Y` tag is not published.
-3. **Versioning** — the workflow rewrites the workspace version in `rust/Cargo.toml` from the tag, so `otterscope version` reports the released version. There is no `-ldflags` injection.
+1. **GitHub Releases** — four native archives, built on matching hosts and uploaded by hand, not five platforms and not static binaries: linux amd64, linux arm64, darwin arm64 and windows amd64. Each archive contains the `otterscope` binary, `LICENSE` and `README.md`. There are no separate checksum files and no signing.
+2. **Docker image on GHCR** — one multi-arch `ghcr.io/otterscope/otterscope` image for linux/amd64 and linux/arm64, tagged `latest` and `X.Y.Z`, built and pushed manually with `docker buildx`. The runtime is distroless `cc-debian12:nonroot` (uid 65532, `/data` as the only writable path), not `FROM scratch`; the body's `X.Y` tag is not published.
+3. **Versioning** — the release commit sets `[workspace.package] version` in `rust/Cargo.toml` (and `Cargo.lock`), and the release script refuses to build when it differs from the tag; the Docker build receives the same value as `--build-arg version`. `otterscope version` reports the released version. There is no `-ldflags` injection.
 
 **Deferred or dropped:**
 
-- **Linux linkage:** the Linux artifacts link glibc 2.39+ (Ubuntu 24.04 baseline). There is no musl/cross build yet, so do not describe them as static.
+- **Linux linkage:** the Linux artifacts link glibc 2.39+ when built on the Ubuntu 24.04 baseline (2.36 via the Debian bookworm Docker path). There is no musl/cross build yet, so do not describe them as static.
 - **Homebrew tap:** deferred. It needs a separate tap repo and formula maintenance; there is no tap today.
 - **deb/rpm packages:** deferred. They need nfpm or equivalent packaging plus distro testing; no distro packages are attached to releases.
-- **darwin amd64 and windows arm64:** deferred. The release matrix currently builds only the four targets above; each extra target needs its own runner and testing.
+- **darwin amd64 and windows arm64:** deferred. The manual release procedure builds only the four targets above; each extra target needs its own host and testing.
 - **Signing (Windows/macOS notarization), Scoop, winget, Nix and Helm:** deferred for the same reasons — certificates, extra packaging and maintenance without current demand.
 - **`go install`:** retired with the Go module; the Rust workspace is not installable through the Go toolchain.
 
-Why: the four native targets and the Docker image cover Linux, macOS and Windows without requiring signing infrastructure or per-distro packaging, which keeps a release to one tag. Homebrew, distro packages and the extra targets are real distribution work, not a line in a YAML file; they can be added to the same release workflow when demand justifies the maintenance.
+Why: the four native targets and the Docker image cover Linux, macOS and Windows without requiring signing infrastructure or per-distro packaging, which keeps a release to one tag plus a short manual checklist. Homebrew, distro packages and the extra targets are real distribution work, not a line in a YAML file; they can be added to the same manual release procedure when demand justifies the maintenance.
 
 Reversing any of this requires a new ADR or an amendment here; the historical body is not a promise that the deferred channels exist.

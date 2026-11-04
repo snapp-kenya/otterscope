@@ -21,14 +21,18 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
 ## 3. Before merging
 
 8. **Verify end-to-end, not just unit tests**: build the binary, run `otterscope serve`, exercise the changed behavior for real (send an OTLP payload, click through the UI change). Record what you did in the PR description ("Verified: …").
-9. **Quality gate**: all six must pass locally before merge.
+9. **Quality gate**: all six must pass locally before merge. There is no CI —
+   these commands *are* the gate, so run every one of them from a clean tree
+   and record the result in the PR description.
 
    ```sh
-   cd rust && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test
+   cd rust && cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo test
    cd web && bun run lint && bun test && bun run build
    ```
 
-   CI runs the same gates in `.github/workflows/rust.yml` (fmt, clippy, cargo test, then bun lint/test/build); it is the only CI workflow.
+   Never merge on a red gate. A flaky failure is still a failure: re-run the
+   command and debug it; there is no job to re-run. `bun run build` matters as
+   much as the tests: the binary embeds `web/dist` at compile time.
 10. **Update the paper trail in the same PR**: ADR if an architectural decision was made, `docs/ROADMAP.md` if scope/timeline shifted, `CLAUDE.md` if the architecture map changed, README if user-facing behavior changed, `docs/api-rust.md` if the HTTP contract changed, and `CHANGELOG.md` under "Unreleased" for anything an operator or API client would notice.
 11. **PR → squash-merge** to the integration branch (or `main` once the port lands), with the tracked item linked in the description.
     - When GitHub Issues are re-enabled and a PR closes several of them, repeat the keyword: `Closes #12, Closes #13`. GitHub honours it only for the first number in a comma-separated list, so `Closes #12, #13` closes #12 and silently leaves #13 open — this stranded nine already-fixed issues after PRs #110 and #114.
@@ -36,7 +40,7 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
 ## 4. After merging
 
 12. **Close the loop**: confirm the tracked item actually closed or the epic checklist was updated — don't assume it did — and move follow-up items into their own tracked items with milestone labels.
-13. **Never leave the shipping branch broken.** If CI fails post-merge, fixing it preempts all other work.
+13. **Never leave the shipping branch broken.** If the local gate fails after merge, fixing it preempts all other work.
 
 ## Tech-debt policy
 
@@ -46,5 +50,6 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
 
 ## Releases
 
-- Tag `vX.Y.Z` on the shipping branch; the release pipeline (`.github/workflows/release.yml`) builds the four targets (linux/amd64, linux/arm64, darwin/arm64, windows/amd64) and the multi-arch Docker image from the Rust workspace. Build the frontend first so `web/dist` is embedded. Linux binaries link glibc, so they are not fully static; see `docs/packaging.md`.
+- Releases are **manual and unsigned**. Tag `vX.Y.Z` on the shipping branch after bumping `[workspace.package] version` in `rust/Cargo.toml` and `CHANGELOG.md`. Then, on each matching host, check out the tag and run `scripts/release.sh --version X.Y.Z`; it builds the frontend and binary, refuses a dirty or version-mismatched tree, and writes `dist/otterscope_X.Y.Z_<artifact>.tar.gz` (`.zip` for Windows). Run it on linux amd64, linux arm64, darwin arm64 and windows amd64; the script derives the target from the host and never assumes a fixed architecture. The four archives, the multi-arch Docker image build/push commands and the Docker-based Linux alternative are in `docs/packaging.md`.
+- Build the frontend first so `web/dist` is embedded (the script does this). Linux binaries link glibc, so they are not fully static; see `docs/packaging.md`.
 - Pre-1.0: minor = features, patch = fixes. Breaking config/API changes need a migration note in the release notes; a JSON contract change links to `docs/api-rust.md`.
