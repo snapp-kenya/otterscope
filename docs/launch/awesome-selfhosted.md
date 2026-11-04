@@ -13,7 +13,7 @@ generated. Submissions are a **YAML file** in the data repo:
 - Repo: <https://github.com/awesome-selfhosted/awesome-selfhosted-data>
 - File: `software/otterscope.yml`
 - Guidelines: <https://github.com/awesome-selfhosted/awesome-selfhosted-data/blob/master/CONTRIBUTING.md>
-- PR template (extra rules): `.github/PULL_REQUEST_TEMPLATE.md` in that repo
+- PR template (extra rules): `PULL_REQUEST_TEMPLATE.md` in that repo
 
 Category: **Generative Artificial Intelligence (GenAI)** — the tag Agenta,
 Khoj, LibreChat and the other LLM tooling sits under. In single-page mode a

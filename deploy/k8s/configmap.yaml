@@ -25,7 +25,7 @@ data:
   OTTERSCOPE_BASE_PATH: ""
 
   # Required outside loopback. UI/API need a Bearer token, OTLP needs a project
-  # ingest key. Mint both against the PVC with `kubectl exec` (deploy/README.md).
+  # ingest key. Mint both against the PVC with `kubectl exec` (deploy/readme.md).
   OTTERSCOPE_READ_AUTH: "true"
 
   # Browser Origin/Host allow-list. Empty accepts loopback and IP literals

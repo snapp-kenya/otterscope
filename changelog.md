@@ -51,6 +51,12 @@ commit history has the rest.
 
 ### Changed
 
+- Documentation and the container build file are renamed to lowercase:
+  `readme.md`, `changelog.md`, `license`, `deploy/readme.md`,
+  `docs/frameworks/readme.md`, `docs/roadmap.md`, `docs/workflow.md` and
+  `dockerfile`. The Cargo manifests keep their required `Cargo.toml`/
+  `Cargo.lock` names. All links, build commands and archive steps point at the
+  new names; file contents are unchanged.
 - The backend is ported from Go to Rust (axum, rusqlite with bundled SQLite,
   prost, rust-embed). The binary stays single and self-contained with the UI
   embedded. CLI flags, `OTTERSCOPE_*` variables and the flags > env > file >
@@ -85,16 +91,19 @@ commit history has the rest.
 
 ### Removed
 
+- The `.github/` directory is removed entirely: no GitHub Actions workflows and
+  no issue templates. No CI service replaces it — the six quality gates are run
+  locally before merge, and releases are built and published manually with
+  `scripts/release.sh` (see [docs/packaging.md](docs/packaging.md)); release
+  artifacts are unsigned. The gate itself is documented in
+  [docs/development.md](docs/development.md).
+- `CLAUDE.md` is replaced by [docs/development.md](docs/development.md), which
+  keeps the architecture map, the hard rules, the development commands and the
+  no-CI gate, written without vendor-specific tooling references.
 - The frozen Go implementation (`cmd/`, `internal/`, `go.mod`, `go.sum`,
-  `web/embed.go`) and its manual reference-only workflow
-  (`.github/workflows/ci.yml`) are deleted; the Rust workspace is now the only
-  implementation. Existing SQLite databases still open without a conversion
-  step.
-- GitHub Actions is gone. The remaining workflows (`.github/workflows/rust.yml`
-  and `.github/workflows/release.yml`) are deleted and no CI service replaces
-  them. The six quality gates are run locally before merge, and releases are
-  built and published manually with `scripts/release.sh` (see
-  [docs/packaging.md](docs/packaging.md)); release artifacts are unsigned.
+  `web/embed.go`) is deleted, along with its reference-only workflow; the Rust
+  workspace is now the only implementation. Existing SQLite databases still
+  open without a conversion step.
 
 ### Fixed
 

@@ -169,7 +169,7 @@ plan:
   steps:
     1. (cd web && bun install --frozen-lockfile && bun run build)
     2. (cd rust && cargo build --release --target ${target} --locked)
-    3. stage ${binary##*/}, LICENSE and README.md under ${name}/
+    3. stage ${binary##*/}, license and readme.md under ${name}/
     4. ${pack}
 EOF
 	publish_hints
@@ -194,7 +194,7 @@ say "building rust for $target"
 say "staging $name"
 mkdir -p "$staging"
 cp "$binary" "$staging/"
-cp LICENSE README.md "$staging/"
+cp license readme.md "$staging/"
 
 case "$archive" in
 	*.zip)

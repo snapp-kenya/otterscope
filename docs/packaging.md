@@ -6,7 +6,7 @@ the two Linux targets — in Docker. `scripts/release.sh` automates one native
 archive per invocation on the host it runs on; the multi-arch container image is
 a separate manual `docker buildx` push. Nothing is signed: no checksums, no
 Windows code signing, no macOS notarization. The local quality gate in
-`CLAUDE.md` must pass before the tag is cut.
+[`development.md`](development.md) must pass before the tag is cut.
 
 The old Go pipeline and its manual CI workflow were deleted with the Go tree;
 the Rust workspace and `scripts/release.sh` are the only build system.
@@ -33,7 +33,7 @@ The version lives in `rust/Cargo.toml` under `[workspace.package] version`.
 `-ldflags` injection.
 
 A release commit bumps that one field (plus `rust/Cargo.lock`, which records
-the workspace package version) and `CHANGELOG.md`, then tags it `vX.Y.Z`. The
+the workspace package version) and `changelog.md`, then tags it `vX.Y.Z`. The
 release script refuses to build unless `[workspace.package] version` equals the
 `--version` passed to it, so a tag can never ship a binary that reports a
 different version. The Docker image gets the same value as
@@ -47,9 +47,9 @@ build; archives and image therefore agree.
 ```sh
 VERSION=0.2.0
 # edit rust/Cargo.toml: [workspace.package] version = "0.2.0"
-# edit CHANGELOG.md: move "Unreleased" entries under the new version
+# edit changelog.md: move "Unreleased" entries under the new version
 cd rust && cargo check && cd ..          # refreshes Cargo.lock's version
-git add rust/Cargo.toml rust/Cargo.lock CHANGELOG.md
+git add rust/Cargo.toml rust/Cargo.lock changelog.md
 git commit -m "Release v$VERSION"
 git tag -a "v$VERSION" -m "v$VERSION"
 git push origin main --follow-tags
@@ -86,7 +86,7 @@ Common flags:
 
 The script builds `web/dist` (`bun install --frozen-lockfile && bun run build`),
 then `cargo build --release --locked` for the target, stages the binary with
-`LICENSE` and `README.md`, and writes
+`license` and `readme.md`, and writes
 `dist/otterscope_<version>_<artifact>.tar.gz` (`.zip` on Windows). At the end it
 prints the GitHub release and GHCR commands; it never pushes anything itself.
 
@@ -100,7 +100,7 @@ cd ..
 $Name = "otterscope_${Version}_windows-amd64"
 New-Item -ItemType Directory -Force "dist/$Name" | Out-Null
 Copy-Item "rust\target\x86_64-pc-windows-msvc\release\otterscope.exe" "dist/$Name/"
-Copy-Item LICENSE, README.md "dist/$Name/"
+Copy-Item license, readme.md "dist/$Name/"
 Compress-Archive -Path "dist/$Name" -DestinationPath "dist/$Name.zip"
 ```
 
@@ -137,7 +137,7 @@ docker buildx build \
 ```
 
 The arm64 half is compiled under QEMU, so the first build is slow; later builds
-reuse the layer cache. The `Dockerfile` is a three-stage build (Bun → Rust →
+reuse the layer cache. The `dockerfile` is a three-stage build (Bun → Rust →
 distroless runtime); see [Container](#container) for the runtime posture.
 
 ### 5. Verify the release
@@ -153,8 +153,8 @@ Each archive contains a single top-level directory,
 `otterscope_<version>_<artifact>/`, with:
 
 - the `otterscope` binary (or `otterscope.exe` on Windows),
-- `LICENSE`,
-- `README.md`.
+- `license`,
+- `readme.md`.
 
 There are no separate checksum files and no signatures. Archives are `tar.gz`
 on Linux and macOS, `zip` on Windows.
@@ -175,7 +175,7 @@ advertise the Linux downloads as static.
 
 ## Building a Linux archive in Docker (no matching host)
 
-The Dockerfile already builds the frontend and the binary for the requested
+The `dockerfile` already builds the frontend and the binary for the requested
 platform, with the version injected. Build for one platform, extract the binary
 from a container, and package it on the host. This works for either Linux
 architecture; on an amd64 host the arm64 build runs under QEMU.
@@ -191,7 +191,7 @@ name="otterscope_${VERSION}_linux-${ARCH}"
 mkdir -p "dist/$name"
 docker cp "$cid:/usr/local/bin/otterscope" "dist/$name/otterscope"
 docker rm "$cid"
-cp LICENSE README.md "dist/$name/"
+cp license readme.md "dist/$name/"
 tar -czf "dist/${name}.tar.gz" -C dist "$name"
 rm -rf "dist/$name"
 ```
@@ -223,7 +223,7 @@ they must be built on matching hosts.
 
 ## Container
 
-`Dockerfile` is a three-stage build: Bun builds `web/dist`, Rust compiles
+`dockerfile` is a three-stage build: Bun builds `web/dist`, Rust compiles
 `--release` with the UI embedded by `rust-embed`, and the runtime is distroless
 `cc-debian12:nonroot` (digest-pinned; distroless publishes no patch tags). It
 runs as uid/gid 65532, keeps `/data` as the only writable path (`TMPDIR` and

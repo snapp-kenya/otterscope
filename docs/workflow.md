@@ -8,7 +8,7 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
 
 0. **Check nobody is already on it**: `gh pr list --search "<topic>"` and read the draft epic's checklist before writing code. Duplicated work is the normal failure mode; an outside contributor once opened #112 within an hour of #105 being filed, and it was duplicated and merged over because nobody looked.
 1. **Work only from a tracked item.** With issues disabled, the item is a line in the port epic (#1), a linked PR, or a follow-up comment on the epic. If the work is not represented there, add it before writing code: problem statement, acceptance criteria, and which milestone it belongs to. Unplanned work discovered mid-task becomes a *new tracked item*, not scope creep on the current one.
-2. **Read the context**: `CLAUDE.md`, the relevant ADRs in `docs/adr/`, and the code you're about to touch. ADR-0006 records the Rust port; ADR-0002 (ingest boundary), ADR-0003 (license) and ADR-0005 (self-host only) still hold. If the work contradicts an ADR, resolve that first (new ADR or a comment on the epic), don't code around it.
+2. **Read the context**: [`development.md`](development.md), the relevant ADRs in `docs/adr/`, and the code you're about to touch. ADR-0006 records the Rust port; ADR-0002 (ingest boundary), ADR-0003 (license) and ADR-0005 (self-host only) still hold. If the work contradicts an ADR, resolve that first (new ADR or a comment on the epic), don't code around it.
 3. **State the plan** in the PR description or epic checklist: approach, files touched, how it will be verified. This is the tech-debt checkpoint — if the plan needs a hack, say so explicitly and file the follow-up *before* merging the hack.
 
 ## 2. While coding
@@ -33,7 +33,7 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
    Never merge on a red gate. A flaky failure is still a failure: re-run the
    command and debug it; there is no job to re-run. `bun run build` matters as
    much as the tests: the binary embeds `web/dist` at compile time.
-10. **Update the paper trail in the same PR**: ADR if an architectural decision was made, `docs/ROADMAP.md` if scope/timeline shifted, `CLAUDE.md` if the architecture map changed, README if user-facing behavior changed, `docs/api-rust.md` if the HTTP contract changed, and `CHANGELOG.md` under "Unreleased" for anything an operator or API client would notice.
+10. **Update the paper trail in the same PR**: ADR if an architectural decision was made, `docs/roadmap.md` if scope/timeline shifted, [`development.md`](development.md) if the architecture map changed, `readme.md` if user-facing behavior changed, `docs/api-rust.md` if the HTTP contract changed, and `changelog.md` under "Unreleased" for anything an operator or API client would notice.
 11. **PR → squash-merge** to the integration branch (or `main` once the port lands), with the tracked item linked in the description.
     - When GitHub Issues are re-enabled and a PR closes several of them, repeat the keyword: `Closes #12, Closes #13`. GitHub honours it only for the first number in a comma-separated list, so `Closes #12, #13` closes #12 and silently leaves #13 open — this stranded nine already-fixed issues after PRs #110 and #114.
 
@@ -50,6 +50,6 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
 
 ## Releases
 
-- Releases are **manual and unsigned**. Tag `vX.Y.Z` on the shipping branch after bumping `[workspace.package] version` in `rust/Cargo.toml` and `CHANGELOG.md`. Then, on each matching host, check out the tag and run `scripts/release.sh --version X.Y.Z`; it builds the frontend and binary, refuses a dirty or version-mismatched tree, and writes `dist/otterscope_X.Y.Z_<artifact>.tar.gz` (`.zip` for Windows). Run it on linux amd64, linux arm64, darwin arm64 and windows amd64; the script derives the target from the host and never assumes a fixed architecture. The four archives, the multi-arch Docker image build/push commands and the Docker-based Linux alternative are in `docs/packaging.md`.
+- Releases are **manual and unsigned**. Tag `vX.Y.Z` on the shipping branch after bumping `[workspace.package] version` in `rust/Cargo.toml` and `changelog.md`. Then, on each matching host, check out the tag and run `scripts/release.sh --version X.Y.Z`; it builds the frontend and binary, refuses a dirty or version-mismatched tree, and writes `dist/otterscope_X.Y.Z_<artifact>.tar.gz` (`.zip` for Windows). Run it on linux amd64, linux arm64, darwin arm64 and windows amd64; the script derives the target from the host and never assumes a fixed architecture. The four archives, the multi-arch Docker image build/push commands and the Docker-based Linux alternative are in `docs/packaging.md`.
 - Build the frontend first so `web/dist` is embedded (the script does this). Linux binaries link glibc, so they are not fully static; see `docs/packaging.md`.
 - Pre-1.0: minor = features, patch = fixes. Breaking config/API changes need a migration note in the release notes; a JSON contract change links to `docs/api-rust.md`.

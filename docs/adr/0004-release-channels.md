@@ -29,7 +29,7 @@ The body above is the original Go-era decision and is kept as history. After the
 
 **Shipping today:**
 
-1. **GitHub Releases** — four native archives, built on matching hosts and uploaded by hand, not five platforms and not static binaries: linux amd64, linux arm64, darwin arm64 and windows amd64. Each archive contains the `otterscope` binary, `LICENSE` and `README.md`. There are no separate checksum files and no signing.
+1. **GitHub Releases** — four native archives, built on matching hosts and uploaded by hand, not five platforms and not static binaries: linux amd64, linux arm64, darwin arm64 and windows amd64. Each archive contains the `otterscope` binary, `license` and `readme.md`. There are no separate checksum files and no signing.
 2. **Docker image on GHCR** — one multi-arch `ghcr.io/otterscope/otterscope` image for linux/amd64 and linux/arm64, tagged `latest` and `X.Y.Z`, built and pushed manually with `docker buildx`. The runtime is distroless `cc-debian12:nonroot` (uid 65532, `/data` as the only writable path), not `FROM scratch`; the body's `X.Y` tag is not published.
 3. **Versioning** — the release commit sets `[workspace.package] version` in `rust/Cargo.toml` (and `Cargo.lock`), and the release script refuses to build when it differs from the tag; the Docker build receives the same value as `--build-arg version`. `otterscope version` reports the released version. There is no `-ldflags` injection.
 

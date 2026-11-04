@@ -1,7 +1,7 @@
 # One process, one SQLite database, one writer. Recreate + replicas: 1 is not
 # a tuning choice: a second writer would corrupt or lock the database, and a
 # RollingUpdate could briefly run two pods against the same ReadWriteOnce
-# volume. Do not add an HPA or raise replicas (deploy/README.md says so
+# volume. Do not add an HPA or raise replicas (deploy/readme.md says so
 # plainly).
 #
 # Port 80 is the only listening port: UI, JSON API, /mcp, /healthz, share links

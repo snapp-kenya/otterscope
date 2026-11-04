@@ -168,7 +168,7 @@ Otterscope is Apache-2.0, ships as one binary and one container image, and is bu
 - **Binaries** — [Releases](https://github.com/otterscope/otterscope/releases) (Linux amd64/arm64, macOS arm64, Windows amd64). The Linux binaries link
   glibc 2.39+, so Docker is the portable option.
 - **Docker** — `ghcr.io/otterscope/otterscope`
-- **Kubernetes** — plain YAML plus `kustomize`, no Helm; see [deploy/README.md](deploy/README.md)
+- **Kubernetes** — plain YAML plus `kustomize`, no Helm; see [deploy/readme.md](deploy/readme.md)
 - **From source** — Bun + Rust; see [Development](#development)
 
 ## Development
@@ -209,9 +209,9 @@ Tests: `cd rust && cargo test` and `cd web && bun test`. Quality gates:
 `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D
 warnings` and `cargo test` in `rust/`; `bun run lint`, `bun test` and `bun run
 build` in `web/`. The HTTP contract is [docs/api-rust.md](docs/api-rust.md) and
-MCP is [docs/mcp.md](docs/mcp.md). See [CLAUDE.md](CLAUDE.md) for the
-architecture map and [docs/WORKFLOW.md](docs/WORKFLOW.md) for the contribution
-process.
+MCP is [docs/mcp.md](docs/mcp.md). See
+[docs/development.md](docs/development.md) for the architecture map and
+[docs/workflow.md](docs/workflow.md) for the contribution process.
 
 Contributions are welcome and there's nothing to sign — no CLA, no copyright
 assignment. GitHub Issues are disabled on this repository; open a PR with a
@@ -219,4 +219,4 @@ focused change.
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](license)

@@ -7,7 +7,7 @@
 # file). Kubernetes expands $(POD_NAME) in args from the env var below.
 #
 # Snapshots are not pruned by this CronJob. Copy them off the volume and prune
-# them on a schedule you own; see deploy/README.md.
+# them on a schedule you own; see deploy/readme.md.
 #
 # podAffinity keeps the Job on the writer's node: the PVC is ReadWriteOnce, so
 # a backup pod scheduled elsewhere would block on a multi-attach error. The

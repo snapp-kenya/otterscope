@@ -1,5 +1,4 @@
 .git
-.github
 .worktrees
 docs
 web/node_modules
@@ -8,7 +7,9 @@ rust/target
 *.db
 *.db-wal
 *.db-shm
-CLAUDE.md
-README.md
+readme.md
+license
+changelog.md
+dockerfile
 docker-compose.yml
 .dockerignore
