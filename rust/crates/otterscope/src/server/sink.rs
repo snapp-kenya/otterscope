@@ -1,6 +1,6 @@
 //! The ingest sink: prices LLM calls, persists the batch, wakes live-tail
-//! clients and schedules assertion evaluation (port of `ingest/sink.go`, which
-//! the Rust ingest module leaves to its caller).
+//! clients and schedules assertion evaluation. The ingest module hands the
+//! normalized batch to its caller, so this lives on the server side.
 
 use std::collections::HashSet;
 use std::sync::Arc;

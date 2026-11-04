@@ -1,5 +1,5 @@
-//! Prometheus text exposition (port of `metrics.go`). Hand-rolled on purpose:
-//! aggregate counts only, no client dependency, no run content.
+//! Prometheus text exposition. Hand-rolled on purpose: aggregate counts only,
+//! no client dependency, no run content.
 
 use crate::store::Metrics;
 

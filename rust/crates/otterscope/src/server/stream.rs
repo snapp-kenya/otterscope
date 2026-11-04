@@ -1,4 +1,5 @@
-//! Live-tail over Server-Sent Events (port of `stream.go`).
+//! Live-tail over Server-Sent Events (ported from the original Go
+//! implementation).
 
 use std::convert::Infallible;
 use std::time::Duration;

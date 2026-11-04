@@ -1,6 +1,6 @@
 //! Assertion evaluation: the ingest-time path and the bounded on-demand
-//! backfill (port of `internal/ingest/evaluate.go`, relocated because the
-//! Rust ingest module stops at normalization).
+//! backfill (ported from the original Go implementation; this lives here
+//! because the ingest module stops at normalization).
 //!
 //! The on-demand call must be bounded: `?run=`, a `?since=`/`?until=` window,
 //! or an explicit `?limit=`. A bare project scored every run in it, which was

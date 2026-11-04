@@ -1,4 +1,4 @@
-//! Demo data seeding (port of `internal/sample`).
+//! Demo data seeding.
 //!
 //! Several services and models, tool loops, an error run, assertion results and
 //! three alert rules — enough to make every screen meaningful on first launch.

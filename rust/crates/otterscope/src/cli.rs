@@ -1,6 +1,6 @@
-//! Database subcommands ported from `cmd/otterscope/main.go`: `token`,
-//! `project`, `backup` and `renormalize`, plus the config/flag plumbing they
-//! share with `serve`.
+//! Database subcommands (`token`, `project`, `backup`, `renormalize`) ported
+//! from the original Go CLI, plus the config/flag plumbing they share with
+//! `serve`.
 
 use anyhow::Context;
 use chrono::{DateTime, SecondsFormat, Utc};

@@ -1,4 +1,4 @@
-//! The read-only MCP tool set (port of `internal/mcp/tools.go`).
+//! The read-only MCP tool set (ported from the original Go implementation).
 //!
 //! Handlers are read-only and take decoded JSON arguments, returning the text
 //! a model reads.

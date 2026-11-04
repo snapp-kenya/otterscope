@@ -1,12 +1,12 @@
-//! HTTP API, auth guard, metrics and the embedded UI (port of `internal/server`).
+//! HTTP API, auth guard, metrics and the embedded UI.
 //!
 //! One listener serves everything: the JSON read/admin API, MCP, the Prometheus
 //! text endpoint, the embedded frontend, and the OTLP receiver at
 //! `/v1/traces`. The process always listens on [`PORT`]; how that is exposed is
-//! a deployment decision, not a setting. The gates run in the order the Go
-//! server composes them: the mount prefix at the very edge, then bearer auth
-//! for the UI/API, then the browser guard, then routing. OTLP keeps its own
-//! ingest-key auth and rate limits inside its handler.
+//! a deployment decision, not a setting. The gates run in one order: the mount
+//! prefix at the very edge, then bearer auth for the UI/API, then the browser
+//! guard, then routing. OTLP keeps its own ingest-key auth and rate limits
+//! inside its handler.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

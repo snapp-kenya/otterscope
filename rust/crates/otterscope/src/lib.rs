@@ -1,9 +1,9 @@
 //! Otterscope — lightweight, self-hosted observability and evals for AI agents.
 //!
-//! Rust port of the Go implementation. Modules mirror the original `internal/`
-//! packages one-to-one so the Go tree stays legible as the reference while the
-//! port is in progress: `model`, `store`, `ingest`, `server`, `config`,
-//! `basepath`, plus `pricing`, `evals`, `alerts`, `mcp` and `sample`.
+//! The crate is organised by responsibility: `model`, `store`, `ingest`,
+//! `server`, `config` and `basepath`, plus `pricing`, `evals`, `alerts`, `mcp`
+//! and `sample`. It was ported from the original Go implementation, which is no
+//! longer in the tree.
 
 pub mod alerts;
 pub mod args;

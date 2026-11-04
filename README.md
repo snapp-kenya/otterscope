@@ -11,7 +11,7 @@ One self-contained binary. One SQLite file. No ClickHouse, no Redis, no S3, no s
 ## Quick start
 
 ```sh
-# grab a binary from Releases, then:
+# grab a release archive (or build from source; see Development), then:
 ./otterscope serve
 ```
 
@@ -42,9 +42,9 @@ than hostname — pass `-base-path /otterscope` (`OTTERSCOPE_BASE_PATH`, or
 exporters at `http://host/otterscope`; OTLP/HTTP appends `/v1/traces` itself,
 so ingest lands at `/otterscope/v1/traces`. The UI bundle bakes its router and
 API base at build time, so **a prefixed deployment requires an image built with
-the matching build arg** — the stock image is root-only. Build the UI with the
-same value (`cd web && OTTERSCOPE_BASE_PATH=/otterscope bun run build`) and the
-image with:
+the matching build arg** — the stock image is built for the root path. Build
+the UI with the same value (`OTTERSCOPE_BASE_PATH=/otterscope bun run build` in
+`web/`) and the image with:
 
 ```sh
 docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
@@ -94,6 +94,14 @@ Point any OTel-instrumented agent at the base URL of your deployment:
 ```sh
 # exporters append /v1/traces themselves; use the host/port you published
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
+```
+
+With `-read-auth` on, also send a project ingest key (mint one with
+`otterscope project add my-agent`); keyless ingest is only accepted when read
+auth is off:
+
+```sh
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <ingest key>"
 ```
 
 Open **http://localhost:8080** (for a host binary listening on 80 it is
@@ -153,13 +161,14 @@ They're good products aimed at a different deployment reality:
 - **LangSmith** and **Braintrust** gate self-hosting behind enterprise contracts.
 - **Phoenix** is ELv2-licensed with an upsell funnel.
 
-Otterscope is Apache-2.0, installs in one command, and is built for individuals and small teams whose traces contain customer data they'd rather keep on their own disk. There is no paid tier, no hosted version, no metering and no seat fees — every feature is in the binary you just downloaded ([ADR-0005](docs/adr/0005-no-hosted-or-paid-offering.md)).
+Otterscope is Apache-2.0, ships as one binary and one container image, and is built for individuals and small teams whose traces contain customer data they'd rather keep on their own disk. There is no paid tier, no hosted version, no metering and no seat fees — every feature is in the binary you just downloaded ([ADR-0005](docs/adr/0005-no-hosted-or-paid-offering.md)).
 
 ## Install
 
 - **Binaries** — [Releases](https://github.com/otterscope/otterscope/releases) (Linux amd64/arm64, macOS arm64, Windows amd64). The Linux binaries link
   glibc 2.39+, so Docker is the portable option.
 - **Docker** — `ghcr.io/otterscope/otterscope`
+- **Kubernetes** — plain YAML plus `kustomize`, no Helm; see [deploy/README.md](deploy/README.md)
 - **From source** — Bun + Rust; see [Development](#development)
 
 ## Development
@@ -193,7 +202,7 @@ not "fully static".
 
 Databases are plain SQLite and keep the same schema and append-only
 migrations, so an existing database opens without a conversion step. There is
-no byte-for-byte compatibility promise across the port: back up before
+no byte-for-byte compatibility promise across releases: back up before
 switching from an older build.
 
 Tests: `cd rust && cargo test` and `cd web && bun test`. Quality gates:

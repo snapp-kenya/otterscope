@@ -1,5 +1,4 @@
-//! The embedded frontend: static files, SPA fallback and asset-URL rewriting
-//! (port of `uiRoot`/`indexHTML` in `server.go`).
+//! The embedded frontend: static files, SPA fallback and asset-URL rewriting.
 
 use axum::body::Body;
 use axum::http::{Method, StatusCode, header};

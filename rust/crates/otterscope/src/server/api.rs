@@ -1,4 +1,4 @@
-//! JSON handlers and their wire shapes (port of `api.go` and `metrics.go`).
+//! JSON handlers and their wire shapes.
 //! All errors use one envelope: `{"error": "..."}`.
 
 use std::collections::HashMap;

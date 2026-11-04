@@ -1,5 +1,5 @@
 //! Webhook destination safety: the SSRF gate, redirect handling and URL
-//! redaction (port of `internal/alerts/webhook.go`).
+//! redaction.
 
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};

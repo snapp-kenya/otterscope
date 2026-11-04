@@ -1,6 +1,6 @@
-//! SQLite persistence. One connection, as in the Go version: the store is a
-//! single writer, and callers must drain a cursor before issuing another query
-//! on the same path (holding a cursor open while writing self-deadlocks).
+//! SQLite persistence. One connection: the store is a single writer, and
+//! callers must drain a cursor before issuing another query on the same path
+//! (holding a cursor open while writing self-deadlocks).
 
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
@@ -157,7 +157,7 @@ pub struct Share {
 }
 
 /// Handle to the single SQLite connection. All access is serialised through the
-/// mutex, matching the Go store's one-writer design.
+/// mutex, matching the single-writer design.
 pub struct Store {
     conn: Mutex<Connection>,
     path: String,

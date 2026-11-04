@@ -1,4 +1,5 @@
-//! Alert rules and the settle-then-notify watcher (port of `internal/alerts`).
+//! Alert rules and the settle-then-notify watcher (ported from the original Go
+//! implementation).
 //!
 //! A rule is a threshold over the store's run aggregates, so an alert is just a
 //! filtered window: the watcher reads [`crate::store::Stats`] and decides.
@@ -51,8 +52,8 @@ fn is_zero(n: &i64) -> bool {
 }
 
 /// Checks a rule's type/config/threshold before storing it. The webhook URL is
-/// resolved here, like the Go implementation, so an internal address is
-/// refused at creation time as well as before every POST.
+/// resolved here, so an internal address is refused at creation time as well as
+/// before every POST.
 pub async fn validate(rule: &Rule) -> Result<()> {
     if rule.name.is_empty() {
         bail!("alert needs a name");

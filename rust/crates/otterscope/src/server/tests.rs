@@ -1,7 +1,7 @@
-//! In-process tests for the HTTP layer (the port of the Go `httptest` suite).
+//! In-process tests for the HTTP layer.
 //!
 //! The backend is an in-memory fake so guard, auth, base-path and wire-shape
-//! behaviour is exercised without the SQLite store, which is ported in parallel.
+//! behaviour is exercised without the SQLite store.
 
 use std::collections::BTreeMap;
 use std::future::Future;

@@ -1,4 +1,5 @@
-//! Assertions and LLM-as-judge evals (port of `internal/evals`).
+//! Assertions and LLM-as-judge evals (ported from the original Go
+//! implementation).
 //!
 //! Results live on the run (ADR-0003: evals fused into the trace store, no
 //! second product). Deterministic assertion types are evaluated locally;

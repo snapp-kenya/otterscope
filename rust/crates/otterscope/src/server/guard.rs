@@ -1,4 +1,4 @@
-//! Browser-facing gate and response hardening (port of `guard.go`).
+//! Browser-facing gate and response hardening.
 //!
 //! Two independent checks protect the API from a page the user visits:
 //!

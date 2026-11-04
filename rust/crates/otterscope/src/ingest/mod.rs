@@ -1,4 +1,5 @@
-//! OTLP/HTTP ingestion and dialect normalization (port of `internal/ingest`).
+//! OTLP/HTTP ingestion and dialect normalization (ported from the original Go
+//! implementation).
 //!
 //! This is the only module that knows OpenTelemetry exists: the receiver
 //! decodes OTLP (protobuf or JSON), normalizes every span to

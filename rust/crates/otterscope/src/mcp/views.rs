@@ -1,6 +1,5 @@
-//! Compact, agent-friendly projections of the domain types (port of
-//! `internal/mcp/views.go`). Kept separate from the HTTP API's wire types so
-//! the two can evolve independently.
+//! Compact, agent-friendly projections of the domain types. Kept separate from
+//! the HTTP API's wire types so the two can evolve independently.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
@@ -101,7 +100,7 @@ fn messages(messages: &[Message]) -> Value {
     )
 }
 
-/// Go-shaped wire form of [`Stats`]: the store keeps snake_case Rust field
+/// Wire form of [`Stats`] for MCP: the store keeps snake_case Rust field
 /// names, while MCP clients expect the API's camelCase names.
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,7 +147,7 @@ pub fn stats_to_mcp(stats: &Stats) -> Value {
     let Ok(mut value) = serde_json::to_value(view) else {
         return Value::Null;
     };
-    // Go's nil slice marshals as null; match it so the shape is identical.
+    // Emit null for an empty list to keep the wire shape stable.
     if stats.assertion_rates.is_empty() {
         value["assertionRates"] = Value::Null;
     }

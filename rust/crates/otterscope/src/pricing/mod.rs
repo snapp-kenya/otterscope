@@ -1,4 +1,4 @@
-//! Maintained pricing table and cost math (port of `internal/pricing`).
+//! Maintained pricing table and cost math.
 //!
 //! Rates are USD per million tokens. The built-in table is maintained by hand;
 //! operators override or extend it with a JSON file via `serve -pricing`.

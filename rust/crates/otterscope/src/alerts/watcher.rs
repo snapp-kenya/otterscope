@@ -1,5 +1,5 @@
 //! The periodic watcher: evaluates enabled rules, applies the settle window
-//! and POSTs webhooks on state transitions (port of `internal/alerts/watcher.go`).
+//! and POSTs webhooks on state transitions.
 
 use std::collections::HashMap;
 use std::future::Future;

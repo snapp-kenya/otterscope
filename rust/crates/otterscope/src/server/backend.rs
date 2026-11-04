@@ -3,8 +3,7 @@
 //! Every call the server makes into `store`, `evals`, `alerts` or `ingest`
 //! goes through [`ApiBackend`]. The production implementation lives in
 //! `backend_real`; tests substitute an in-memory backend, which is what keeps
-//! the guard, auth and wire-shape assertions runnable while those modules are
-//! ported in parallel.
+//! the guard, auth and wire-shape assertions runnable without the real store.
 
 use std::future::Future;
 use std::pin::Pin;

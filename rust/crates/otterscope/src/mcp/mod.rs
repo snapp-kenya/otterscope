@@ -1,4 +1,4 @@
-//! MCP server over HTTP (port of `internal/mcp`).
+//! MCP server over HTTP (ported from the original Go implementation).
 //!
 //! Exposes Otterscope's read-only data as MCP tools over a stateless Streamable
 //! HTTP endpoint (protocol revision 2026-07-28), so an agent can query its own

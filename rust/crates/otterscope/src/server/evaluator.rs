@@ -1,4 +1,5 @@
-//! The background assertion evaluator (port of `internal/ingest/evaluator.go`).
+//! The background assertion evaluator (ported from the original Go
+//! implementation).
 //!
 //! One worker owns evaluation off the ingest path: a bounded queue applies
 //! backpressure instead of unbounded growth, and a drain on shutdown makes
