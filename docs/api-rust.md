@@ -191,9 +191,10 @@ the server.
 
 `POST /api/alerts` (admin) — body `{ "project"?, "name", "type", "threshold",
 "windowSecs"?, "config"?, "webhookUrl", "settleSecs"? }`. `windowSecs` defaults
-to 3600 and `settleSecs` to 0 (notify as soon as the condition changes); only
-the UI's new-alert draft starts at 300s. `enabled` is true and
-`firing`/`pendingSinceNs` are watcher-owned.
+to 3600 and must be positive and at most 2592000 (30 days); a larger value is
+rejected, never clamped. `settleSecs` defaults to 0 (notify as soon as the
+condition changes); only the UI's new-alert draft starts at 300s. `enabled` is
+true and `firing`/`pendingSinceNs` are watcher-owned.
 `201` with the redacted alert. Invalid rule or non-public webhook host: `400`.
 Duplicate name: `409`.
 

@@ -293,6 +293,33 @@ async fn mcp_is_mounted_and_answers_discover() {
         "otterscope"
     );
 
+    // A tool call exercises the blocking store wrapper against the real SQLite
+    // connection: the MCP endpoint is an async handler, so its store read is
+    // offloaded rather than skipped.
+    let mut call = request(
+        "POST",
+        "/mcp",
+        Some(
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"c","version":"1"}},"name":"list_runs","arguments":{}}}"#,
+        ),
+    );
+    call.headers_mut().insert(
+        "MCP-Protocol-Version",
+        HeaderValue::from_static("2026-07-28"),
+    );
+    call.headers_mut()
+        .insert("Mcp-Method", HeaderValue::from_static("tools/call"));
+    call.headers_mut()
+        .insert("Mcp-Name", HeaderValue::from_static("list_runs"));
+    let (status, _, raw) = send(&app, call).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_slice(&raw).expect("json");
+    let text = body["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text");
+    let payload: Value = serde_json::from_str(text).expect("tool payload");
+    assert_eq!(payload["runs"].as_array().map(Vec::len), Some(0));
+
     // A legacy handshake is rejected, not negotiated downward.
     let mut legacy = request(
         "POST",

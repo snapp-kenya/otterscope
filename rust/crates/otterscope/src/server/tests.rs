@@ -51,6 +51,9 @@ struct FakeState {
     max_evaluate_runs: Option<i64>,
     max_judge_calls: Option<i64>,
     broken: bool,
+    /// Thread that served each backend call, so tests can prove the blocking
+    /// pool, not the async worker, runs the store work.
+    threads: Vec<std::thread::ThreadId>,
 }
 
 impl Fake {
@@ -347,6 +350,13 @@ fn validate_alert(alert: &NewAlert) -> Result<(), String> {
     if alert.window_secs <= 0 {
         return Err("windowSecs must be positive".into());
     }
+    if alert.window_secs > crate::alerts::MAX_WINDOW_SECS {
+        return Err(format!(
+            "windowSecs {} is over the {} second maximum (30 days)",
+            alert.window_secs,
+            crate::alerts::MAX_WINDOW_SECS
+        ));
+    }
     if alert.settle_secs < 0 {
         return Err("settleSecs cannot be negative".into());
     }
@@ -394,7 +404,8 @@ fn redact_webhook(raw: &str) -> String {
 
 impl ApiBackend for Fake {
     fn list_runs(&self, filter: &Filter, limit: i64, offset: i64) -> BackendResult<Vec<Run>> {
-        let state = self.lock();
+        let mut state = self.lock();
+        state.threads.push(std::thread::current().id());
         if state.broken {
             return Err(broken());
         }
@@ -413,7 +424,8 @@ impl ApiBackend for Fake {
     }
 
     fn get_run(&self, id: &str) -> BackendResult<(Run, Vec<Step>)> {
-        let state = self.lock();
+        let mut state = self.lock();
+        state.threads.push(std::thread::current().id());
         if state.broken {
             return Err(broken());
         }
@@ -766,6 +778,7 @@ impl ApiBackend for Fake {
 
     fn create_share(&self, project: &str, run_id: &str) -> BackendResult<String> {
         let mut state = self.lock();
+        state.threads.push(std::thread::current().id());
         if state.broken {
             return Err(broken());
         }
@@ -855,7 +868,8 @@ impl ApiBackend for Fake {
     }
 
     fn list_audit(&self, limit: i64) -> Vec<AuditRecord> {
-        let state = self.lock();
+        let mut state = self.lock();
+        state.threads.push(std::thread::current().id());
         state
             .audit
             .iter()
@@ -866,7 +880,8 @@ impl ApiBackend for Fake {
     }
 
     fn list_tokens(&self) -> BackendResult<Vec<TokenRecord>> {
-        let state = self.lock();
+        let mut state = self.lock();
+        state.threads.push(std::thread::current().id());
         if state.broken {
             return Err(broken());
         }
@@ -917,6 +932,7 @@ impl ApiBackend for Fake {
 
     fn authenticate_token(&self, token: &str) -> Option<TokenRecord> {
         let mut state = self.lock();
+        state.threads.push(std::thread::current().id());
         let (_, record) = state
             .tokens
             .iter_mut()
@@ -2501,6 +2517,55 @@ async fn oversized_body_is_rejected_with_the_json_envelope() {
     assert_eq!(body["error"], "request body too large");
 }
 
+// ------------------------------------------------------------- blocking pool
+
+fn worker_thread() -> std::thread::ThreadId {
+    std::thread::current().id()
+}
+
+fn assert_off_the_async_worker(fake: &Fake) {
+    let threads = fake.lock().threads.clone();
+    assert!(!threads.is_empty(), "no backend call was recorded");
+    let worker = worker_thread();
+    for thread in threads {
+        assert_ne!(
+            thread, worker,
+            "a backend call ran on the async worker thread"
+        );
+    }
+}
+
+#[tokio::test]
+async fn handlers_run_store_work_off_the_async_worker() {
+    let fake = Fake::new();
+    seed_run(&fake, "r1", 1000);
+    let app = app(&fake);
+    fake.lock().threads.clear();
+
+    let (status, _) = send_json(&app, make_request(Method::GET, "/api/runs", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send_json(&app, make_request(Method::GET, "/api/audit", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send_json(&app, make_request(Method::GET, "/api/tokens", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send_json(&app, make_request(Method::POST, "/api/runs/r1/share", None)).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    assert_off_the_async_worker(&fake);
+}
+
+#[tokio::test]
+async fn auth_lookup_runs_off_the_async_worker() {
+    let fake = Fake::new();
+    let token = fake.create_token("operator", Scope::Admin).expect("token");
+    fake.lock().threads.clear();
+    let app = app_with(&fake, auth_options());
+
+    let (status, _) = token_send(&app, Method::GET, "/api/runs", Some(&token.token), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_off_the_async_worker(&fake);
+}
+
 #[tokio::test]
 async fn store_failure_is_internal_error() {
     let fake = Fake::new();
@@ -3129,6 +3194,52 @@ async fn create_alert_accepts_public_webhook() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{}", body_text(&body));
+}
+
+#[tokio::test]
+async fn create_alert_window_cap_is_a_boundary_not_a_clamp() {
+    let fake = Fake::new();
+    let app = app(&fake);
+    let alert_at = |name: &str, window_secs: i64| {
+        serde_json::json!({
+            "project": "default", "name": name, "type": "error_rate",
+            "threshold": 0.5, "windowSecs": window_secs,
+            "webhookUrl": "https://93.184.216.34/hook",
+        })
+        .to_string()
+    };
+
+    // The cap itself is valid and stored unchanged, not clamped.
+    let (status, _, body) = send(
+        &app,
+        make_request(
+            Method::POST,
+            "/api/alerts",
+            Some(&alert_at("at-cap", crate::alerts::MAX_WINDOW_SECS)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", body_text(&body));
+    let created: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(created["windowSecs"], crate::alerts::MAX_WINDOW_SECS);
+
+    // One second over is invalid input: 400, and nothing is stored.
+    let (status, _, body) = send(
+        &app,
+        make_request(
+            Method::POST,
+            "/api/alerts",
+            Some(&alert_at("over-cap", crate::alerts::MAX_WINDOW_SECS + 1)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", body_text(&body));
+    let text = body_text(&body);
+    assert!(text.contains("windowSecs"), "{text}");
+    let (status, _, body) = send(&app, make_request(Method::GET, "/api/alerts", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let list: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(list["alerts"].as_array().map(Vec::len), Some(1));
 }
 
 #[tokio::test]

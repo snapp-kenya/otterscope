@@ -51,12 +51,17 @@ impl super::Store {
 
     /// Revoke a share token. False means there was nothing to revoke, so
     /// nothing is audited.
+    ///
+    /// The audit entry records the token's SHA-256 digest, never a prefix or
+    /// any other part of the token: the digest is irreversible, and an
+    /// operator who still holds the token can recompute it to correlate the
+    /// revocation with the link it revoked.
     pub fn delete_share(&self, token: &str) -> anyhow::Result<bool> {
         let conn = self.lock()?;
         if conn.execute("DELETE FROM shares WHERE token = ?", params![token])? == 0 {
             return Ok(false);
         }
-        super::audit::record(&conn, "delete", "share", &super::short_token(token));
+        super::audit::record(&conn, "delete", "share", &super::tokens::token_hash(token));
         Ok(true)
     }
 }

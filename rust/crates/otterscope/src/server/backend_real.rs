@@ -173,7 +173,7 @@ impl ApiBackend for RealBackend {
         options: &'a EvaluateOptions,
     ) -> Pin<Box<dyn Future<Output = BackendResult<EvaluateReport>> + Send + 'a>> {
         Box::pin(async move {
-            super::evaluate::evaluate_project(self.store.as_ref(), &self.judge, options)
+            super::evaluate::evaluate_project(&self.store, &self.judge, options)
                 .await
                 .map_err(map_store_error)
         })
@@ -340,6 +340,7 @@ impl ApiBackend for RealBackend {
     }
 
     fn mcp_router(&self) -> Option<axum::Router> {
-        Some(crate::mcp::Handler::new(self.store.clone(), self.version.clone()).into_router())
+        let store = crate::mcp::BlockingStore::new(self.store.clone());
+        Some(crate::mcp::Handler::new(Arc::new(store), self.version.clone()).into_router())
     }
 }
