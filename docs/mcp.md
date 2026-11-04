@@ -35,9 +35,13 @@ wrong."*
 ## Connect any MCP client
 
 Point it at `http://localhost:8317/mcp` with the Streamable HTTP transport
-(add the base path if the server is mounted under one). The server negotiates
-protocol version `2025-11-25` (and accepts older revisions) and runs stateless
-(no session header required).
+(add the base path if the server is mounted under one). The server implements
+protocol revision `2026-07-28` only, the stateless revision: there is no
+`initialize` handshake and no `Mcp-Session-Id`. Clients send
+`MCP-Protocol-Version`, `Mcp-Method` and (for `tools/call`) `Mcp-Name` headers,
+with the protocol version and client capabilities mirrored in each request's
+`_meta`; older protocol revisions are rejected with
+`UnsupportedProtocolVersionError`.
 
 ## A note on exposure
 

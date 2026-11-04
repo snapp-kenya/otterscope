@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{HeaderMap, Request, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, Request, StatusCode, header};
 use chrono::{TimeZone, Utc};
 use otterscope::evals::Assertion;
 use otterscope::model::{Status, Step, StepKind};
@@ -145,24 +145,56 @@ async fn routes_work_against_the_real_store() {
 }
 
 #[tokio::test]
-async fn mcp_is_mounted_and_negotiates_a_version() {
+async fn mcp_is_mounted_and_answers_discover() {
     let (dir, store) = temp_db();
     let store = Arc::new(store);
     let app = app(store.clone(), Options::default());
 
-    let (status, body) = send_json(
-        &app,
-        request(
-            "POST",
-            "/mcp",
-            Some(
-                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"c","version":"1"}}}"#,
-            ),
+    let mut discover = request(
+        "POST",
+        "/mcp",
+        Some(
+            r#"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"c","version":"1"}}}}"#,
         ),
-    )
-    .await;
+    );
+    discover.headers_mut().insert(
+        "MCP-Protocol-Version",
+        HeaderValue::from_static("2026-07-28"),
+    );
+    discover
+        .headers_mut()
+        .insert("Mcp-Method", HeaderValue::from_static("server/discover"));
+    let (status, body) = send_json(&app, discover).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
+    assert_eq!(body["result"]["resultType"], "complete");
+    assert_eq!(
+        body["result"]["supportedVersions"],
+        serde_json::json!(["2026-07-28"])
+    );
+    assert_eq!(
+        body["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "otterscope"
+    );
+
+    // A legacy handshake is rejected, not negotiated downward.
+    let mut legacy = request(
+        "POST",
+        "/mcp",
+        Some(
+            r#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2025-06-18","io.modelcontextprotocol/clientCapabilities":{}}}}"#,
+        ),
+    );
+    legacy.headers_mut().insert(
+        "MCP-Protocol-Version",
+        HeaderValue::from_static("2025-06-18"),
+    );
+    legacy
+        .headers_mut()
+        .insert("Mcp-Method", HeaderValue::from_static("initialize"));
+    let (status, _, raw) = send(&app, legacy).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(&raw).expect("json");
+    assert_eq!(body["error"]["code"], -32022);
 
     drop(store);
     let _ = std::fs::remove_dir_all(dir);

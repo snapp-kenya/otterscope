@@ -7,7 +7,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::routing::post;
 use otterscope::alerts::{Rule, Watcher, WebhookGate};
-use otterscope::mcp::Handler;
+use otterscope::mcp::{Handler, PROTOCOL_VERSION};
 use otterscope::store::{Filter, Store};
 use otterscope::{VERSION, sample};
 
@@ -53,22 +53,67 @@ async fn sample_seeds_a_usable_database() {
     assert_eq!(results.len(), 2);
 }
 
+fn mcp_headers(method: &str, name: Option<&str>) -> axum::http::HeaderMap {
+    use axum::http::{HeaderValue, header::HeaderName};
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("mcp-protocol-version"),
+        HeaderValue::from_static(PROTOCOL_VERSION),
+    );
+    headers.insert(
+        HeaderName::from_static("mcp-method"),
+        HeaderValue::from_str(method).expect("method header"),
+    );
+    if let Some(name) = name {
+        headers.insert(
+            HeaderName::from_static("mcp-name"),
+            HeaderValue::from_str(name).expect("name header"),
+        );
+    }
+    headers
+}
+
+fn mcp_body(method: &str, id: i64, params: serde_json::Value) -> Vec<u8> {
+    let mut params = params.as_object().cloned().unwrap_or_default();
+    params.insert(
+        "_meta".into(),
+        serde_json::json!({
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "integration-test", "version": "1"},
+        }),
+    );
+    serde_json::to_vec(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    }))
+    .expect("request body")
+}
+
 #[tokio::test]
 async fn mcp_tools_query_the_real_store() {
     let store = Arc::new(Store::open(&database_path("mcp")).expect("open store"));
     sample::seed(&*store, 4).await.expect("seed");
     let handler = Handler::new(store.clone(), VERSION);
 
-    let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_runs","arguments":{"limit":10}}}"#;
+    let body = mcp_body(
+        "tools/call",
+        1,
+        serde_json::json!({"name": "list_runs", "arguments": {"limit": 10}}),
+    );
     let reply = handler
         .handle(
             &axum::http::Method::POST,
-            &axum::http::HeaderMap::new(),
-            body,
+            &mcp_headers("tools/call", Some("list_runs")),
+            &body,
         )
         .await;
     assert_eq!(reply.status, axum::http::StatusCode::OK);
     let response: serde_json::Value = serde_json::from_slice(&reply.body).expect("json");
+    assert_eq!(response["result"]["resultType"], "complete");
     assert_eq!(response["result"]["isError"], false);
     let text = response["result"]["content"][0]["text"]
         .as_str()
@@ -76,12 +121,16 @@ async fn mcp_tools_query_the_real_store() {
     let payload: serde_json::Value = serde_json::from_str(text).expect("payload");
     assert_eq!(payload["runs"].as_array().expect("runs").len(), 4);
 
-    let body = br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_stats","arguments":{}}}"#;
+    let body = mcp_body(
+        "tools/call",
+        2,
+        serde_json::json!({"name": "get_stats", "arguments": {}}),
+    );
     let reply = handler
         .handle(
             &axum::http::Method::POST,
-            &axum::http::HeaderMap::new(),
-            body,
+            &mcp_headers("tools/call", Some("get_stats")),
+            &body,
         )
         .await;
     let response: serde_json::Value = serde_json::from_slice(&reply.body).expect("json");
