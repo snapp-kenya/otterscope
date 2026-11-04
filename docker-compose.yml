@@ -1,12 +1,11 @@
 # Minimal self-hosted deployment: UI on 127.0.0.1:8317, OTLP ingest on
 # 127.0.0.1:4318, data in a named volume, non-root, read-only root filesystem.
 #
-# The published ports bind the host's loopback address only. Read auth is not
-# enabled below because the Rust binary does not implement `token add` or
-# `project add` yet, so there is no way to mint the first token; until those
-# land, keep these bindings on loopback and do not widen them. For anything
-# wider than this machine, put a reverse proxy with TLS and real auth in front
-# instead.
+# The published ports bind the host's loopback address only. Read auth is on:
+# the UI/API need a Bearer token and OTLP ingest needs a project ingest key.
+# Mint them once in the shared volume with the commands at the bottom before
+# opening the UI. For anything wider than this machine, put a reverse proxy
+# with TLS in front instead of changing these bindings.
 services:
   otterscope:
     image: ghcr.io/otterscope/otterscope:latest
@@ -28,11 +27,23 @@ services:
       - 0.0.0.0:8317
       - -otlp
       - 0.0.0.0:4318
+      - -read-auth
     ports:
       - "127.0.0.1:8317:8317"
       - "127.0.0.1:4318:4318"
     volumes:
       - otterscope-data:/data
+    # Mint the first read token (required to open the UI/API; the UI prompts
+    # for it):
+    #   docker compose run --rm otterscope token add local -db /data/otterscope.db
+    # The secret is printed once; paste it into the prompt or send it as
+    # "Authorization: Bearer <token>". An admin token can mint or revoke
+    # tokens, write assertions, saved views or alerts, and run evaluations:
+    #   docker compose run --rm otterscope token add local-admin -admin -db /data/otterscope.db
+    # Per-project ingest keys for agents (OTLP requires one with read auth on):
+    #   docker compose run --rm otterscope project add my-agent -db /data/otterscope.db
+    # The ingest key is printed there and listed by `project list`; export it as
+    # OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <key>".
 
 volumes:
   otterscope-data:

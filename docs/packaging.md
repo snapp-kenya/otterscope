@@ -52,5 +52,5 @@ and `serve` is the default command.
 
 `docker-compose.yml` keeps the deployment posture of the Go example: loopback
 publishing, read-only root filesystem, all capabilities dropped, named data
-volume. Read auth is intentionally off until `token add`/`project add` are
-ported.
+volume, and read auth on. Mint the first read or admin token and a project
+ingest key with the `docker compose run` commands documented in that file.
