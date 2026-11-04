@@ -27,10 +27,10 @@ applyTo: "**/*.md"
 ```
 
 - Note the space before and after the `|` in the header divider line.
-- It is important that you don't write '|---|---|' without spaces, as that will
-  appear as errors in the markdown linter. The correct format is '| --- | --- |'
-  with spaces around the dashes (or around the bar symbols, if you want to
-  discuss it from that perspective).
+- It is important that you don't write '|---|---|' without spaces: it is invalid
+  table syntax. The correct format is '| --- | --- |' with spaces around the
+  dashes (or around the bar symbols, if you want to discuss it from that
+  perspective).
 
 ## Mermaid
 
@@ -46,9 +46,8 @@ applyTo: "**/*.md"
 ```
 
 - This tunes the diagram for the dark editor/GitHub preview background.
-  Renderers that need a light background (PDF exports, the website) strip this
-  directive themselves rather than the markdown source being maintained in two
-  variants.
+  Renderers that need a light background strip this directive themselves rather
+  than the markdown source being maintained in two variants.
 
 
 ## Code Blocks

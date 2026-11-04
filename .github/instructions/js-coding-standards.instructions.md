@@ -147,12 +147,11 @@ inlined for simplicity.
 
 ## Logging (server-side only - does not apply to browser code)
 
-All server-side Bun processes - backend services under `services/` and
-`platform/`, and server processes under `frontend/` - write structured JSON logs
-through the service's own logger module, built on Bun's standard output. There
-is no logging library and no logging package to install: the module is ours, one
-file per process, wrapping `Bun.stdout`. That is a claim about logging only. The
-component still resolves and installs its own dependencies from its own
+All server-side Bun processes write structured JSON logs through the
+service's own logger module, built on Bun's standard output. There is no
+logging library and no logging package to install: the module is ours, one
+file per process, wrapping `Bun.stdout`. That is a claim about logging only.
+The component still resolves and installs its own dependencies from its own
 manifest, a service from its `Cargo.toml` and a TypeScript component from its
 `package.json`. Browser code does not log to the server.
 

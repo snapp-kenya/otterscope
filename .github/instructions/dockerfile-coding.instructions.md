@@ -100,10 +100,9 @@ The manifests are copied and installed before the source, so editing a source
 file does not reinstall anything. The runtime stage installs production
 dependencies only, and copies the built output rather than the source tree.
 
-Where a component genuinely has no dependencies - the validation scripts under
-`.github/scripts` are one, since they use nothing but Bun's own APIs - there is
-no manifest to copy and no install step, and the section is omitted rather than
-written so that it changes nothing.
+Where a component genuinely has no dependencies there is no manifest to copy and
+no install step; the section is omitted rather than written so that it changes
+nothing.
 
 ## Security
 1. run as non-root user when possible
