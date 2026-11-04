@@ -2,6 +2,10 @@
 description: "Use when writing, reviewing, or testing Rust backends, Rust source, Cargo manifests and lockfiles, cargo configuration, or Rust toolchain files. Enforces safe Rust, bounded async work, contract preservation, and container-only verification."
 applyTo: "**/*.rs,**/Cargo.toml,**/Cargo.lock,**/rust-toolchain,**/rust-toolchain.toml,**/.cargo/config,**/.cargo/config.toml"
 changes:
+  - date: 2026-11-04
+    ticket: [HITL]
+    description: Removed the CI and audit-gate requirements; verification is manual in containers, since this repository runs no CI.
+    agent: Default Agent
   - date: 2026-10-12
     ticket: [HITL]
     description: Added the Failure behaviour section forbidding services from detecting or compensating for missing dependencies, added the Platform security section, made the tenant a platform-bound value the service never handles, and moved acting-identity validation to the platform.
@@ -35,7 +39,8 @@ changes:
    `2024`, and no nightly features. Edition 2024 first shipped in Rust 1.85;
    that is an edition minimum, not the current stable version. Resolve and pin
    an exact stable version in `rust-toolchain.toml` and the builder image,
-   including its digest; do not leave CI on a floating `stable` or `latest`.
+   including its digest; do not leave the build on a floating `stable` or
+   `latest`.
 2. Declare `edition = "2024"` and an honest `rust-version` in Cargo manifests;
    inherit workspace policy consistently. Update compiler pins deliberately
    with compatibility and security evidence, never silently during a build.
@@ -70,10 +75,11 @@ changes:
    revisions. Review lockfile changes, build scripts, proc macros, native
    libraries and feature expansion; disable unused default features when
    compatible. Do not use unreviewed sources or fetch code at runtime.
-5. Run RustSec audit and the existing licence, vulnerability and supply-chain
-   checks. Record narrowly scoped advisory exceptions with approval, owner and
-   expiry. Do not suppress a finding globally. Apply the existing vendor-risk
-   policy without adding a proprietary-vendor ban or exception.
+5. Run the RustSec audit when dependencies change, together with the licence,
+   vulnerability and supply-chain checks. Record narrowly scoped advisory
+   exceptions with approval, owner and expiry. Do not suppress a finding
+   globally. Apply the existing vendor-risk policy without adding a
+   proprietary-vendor ban or exception.
 
 ## Platform security
 
@@ -238,10 +244,10 @@ changes:
    Read the [Dockerfile coding standard](dockerfile-coding.instructions.md)
    before changing images, and follow the repository's shell conventions
    before writing automation.
-2. Use repository-owned, digest-pinned builder and audit images with the exact
-   stable compiler, rustfmt, clippy and pinned cargo-audit already included.
-   Do not install tools dynamically during verification. Record source SHA,
-   image digest, compiler/tool versions, feature set and target architecture.
+2. Use a digest-pinned builder image carrying the exact stable compiler,
+   rustfmt and clippy. Do not install tools dynamically during verification.
+   Record source SHA, image digest, compiler/tool versions, feature set and
+   target architecture.
 3. Fetch locked dependencies in a controlled container preparation step;
    build/test offline with `--frozen` once the cache or vendored sources are
    ready. Use `--locked` when the approved harness requires fetch access. A
@@ -250,13 +256,13 @@ changes:
 4. The following are commands INSIDE the approved verification containers,
    not host commands or claims that a harness already exists:
 
-   | Gate | Container command / required evidence |
+   | Check | Container command / required evidence |
    | --- | --- |
    | fmt | `cargo fmt --all -- --check` |
    | clippy | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` |
    | build | `cargo build --workspace --release --locked` with the approved production features and target |
    | test | `cargo test --workspace --all-targets --all-features --locked`, plus `cargo test --workspace --doc --all-features --locked` and deployed/default feature coverage |
-   | audit | `cargo audit --file Cargo.lock` with pinned cargo-audit and a fresh, recorded RustSec database revision |
+   | audit | when dependencies change: `cargo audit --file Cargo.lock` in a pinned container, recording the RustSec database revision |
 
    Replace `--locked` with `--frozen` after preparation. Use an explicitly
    documented feature matrix instead of `--all-features` for incompatible
@@ -272,14 +278,14 @@ changes:
 6. Runtime images contain only required artefacts and libraries, run with
    least privilege and do not contain compilers or source secrets. Produce
    SBOM, scans, signatures and provenance for release images.
-7. Tekton provides separate `fmt`, `clippy`, `build`, `test` and `audit` tasks
-   against the same SHA, lockfile, builder pins and feature/target matrix.
-   Failure of any required gate blocks release-candidate promotion. Retain
-   task evidence and sign the multi-architecture manifest only after all
-   target gates pass. Reproducibility means recorded, controlled inputs; do
-   not claim bit-for-bit reproducibility without comparing outputs.
-8. Report missing source, images, Compose descriptors, Tekton tasks, services
-   or network access as gaps. Do not claim unrun checks passed or implement
+7. This repository runs no CI. Run these checks manually in containers before
+   a release, against the same SHA, lockfile, builder pins and feature/target
+   matrix, and record the commands and results in the pull request. Do not
+   claim a check ran when it did not. Reproducibility means recorded,
+   controlled inputs; do not claim bit-for-bit reproducibility without
+   comparing outputs.
+8. Report missing source, images, Compose descriptors, services or network
+   access as gaps. Do not claim unrun checks passed or implement
    speculative sidecar source merely to obtain a green check.
 
 ## Official references
