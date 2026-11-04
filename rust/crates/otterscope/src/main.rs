@@ -29,7 +29,8 @@ fn main() -> ExitCode {
             println!("{}", otterscope::VERSION);
             Ok(())
         }
-        "renormalize" | "backup" | "token" | "sample" | "project" => Err(anyhow::anyhow!(
+        "sample" => sample(rest),
+        "renormalize" | "backup" | "token" | "project" => Err(anyhow::anyhow!(
             "{command} is not ported yet"
         )),
         other => {
@@ -46,6 +47,27 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn sample(argv: &[String]) -> anyhow::Result<()> {
+    let parsed = args::parse(argv, &[]).map_err(anyhow::Error::msg)?;
+    let config_path = parsed
+        .get("config")
+        .map(str::to_string)
+        .or_else(|| std::env::var("OTTERSCOPE_CONFIG").ok())
+        .unwrap_or_default();
+    let cfg = config::Config::load(&config_path, |k| std::env::var(k).ok())
+        .map_err(anyhow::Error::msg)?;
+    let db = parsed.string("db", &cfg.db);
+    let runs = parsed.int("runs", 60).map_err(anyhow::Error::msg)?;
+
+    let store = store::Store::open(&db)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(otterscope::sample::seed(&store, runs.max(0) as usize))?;
+    println!("seeded {runs} sample runs into {db}");
+    Ok(())
 }
 
 fn usage() {
