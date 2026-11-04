@@ -12,6 +12,26 @@
 //! - an unknown flag is an error, never silently ignored
 
 use std::collections::BTreeMap;
+use std::fmt;
+
+/// A rejected command line. `main` maps this to Go's exit code 2, as
+/// `flag.ExitOnError` does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Error(String);
+
+impl Error {
+    fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// Result of parsing a flag set.
 #[derive(Debug, Default, Clone)]
@@ -57,9 +77,10 @@ impl Parsed {
     }
 }
 
-/// Parse `args` (without the program name) against the names of the boolean
-/// flags in `bools`; every other known name is string-valued by default.
-pub fn parse(args: &[String], bools: &[&str]) -> Result<Parsed, String> {
+/// Parse `args` (without the program name) against the subcommand's known flag
+/// names: `values` take an argument, `bools` do not. Any other flag is rejected
+/// with Go's wording.
+pub fn parse(args: &[String], values: &[&str], bools: &[&str]) -> Result<Parsed, Error> {
     let mut out = Parsed::default();
     let mut i = 0;
     while i < args.len() {
@@ -78,9 +99,14 @@ pub fn parse(args: &[String], bools: &[&str]) -> Result<Parsed, String> {
             None => (body, None),
         };
         if name.is_empty() {
-            return Err(format!("bad flag syntax: {arg}"));
+            return Err(Error::new(format!("bad flag syntax: {arg}")));
         }
         let is_bool = bools.contains(&name);
+        if !is_bool && !values.contains(&name) {
+            return Err(Error::new(format!(
+                "flag provided but not defined: -{name}"
+            )));
+        }
         let value = match inline {
             Some(v) => v,
             None if is_bool => "true".to_string(),
@@ -88,7 +114,7 @@ pub fn parse(args: &[String], bools: &[&str]) -> Result<Parsed, String> {
                 i += 1;
                 match args.get(i) {
                     Some(v) => v.clone(),
-                    None => return Err(format!("flag needs an argument: -{name}")),
+                    None => return Err(Error::new(format!("flag needs an argument: -{name}"))),
                 }
             }
         };
@@ -102,9 +128,10 @@ pub fn parse(args: &[String], bools: &[&str]) -> Result<Parsed, String> {
 mod tests {
     use super::*;
 
-    fn p(args: &[&str], bools: &[&str]) -> Parsed {
+    fn p(args: &[&str], values: &[&str], bools: &[&str]) -> Parsed {
         parse(
             &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            values,
             bools,
         )
         .unwrap()
@@ -112,21 +139,52 @@ mod tests {
 
     #[test]
     fn accepts_single_and_double_dash_and_equals() {
-        let a = p(&["-db", "/tmp/x.db", "--listen=:9000"], &[]);
+        let a = p(
+            &["-db", "/tmp/x.db", "--listen=:9000"],
+            &["db", "listen"],
+            &[],
+        );
         assert_eq!(a.get("db"), Some("/tmp/x.db"));
         assert_eq!(a.get("listen"), Some(":9000"));
     }
 
     #[test]
     fn booleans_take_no_value() {
-        let a = p(&["-read-auth", "-db", "x"], &["read-auth"]);
+        let a = p(&["-read-auth", "-db", "x"], &["db"], &["read-auth"]);
         assert!(a.bool("read-auth", false).unwrap());
         assert_eq!(a.get("db"), Some("x"));
     }
 
     #[test]
     fn stops_at_first_positional() {
-        let a = p(&["add", "-db", "x"], &[]);
+        let a = p(&["add", "-db", "x"], &["db"], &[]);
         assert_eq!(a.rest, vec!["add", "-db", "x"]);
+    }
+
+    #[test]
+    fn rejects_unknown_flags_with_go_wording() {
+        let err = parse(
+            &["-retentionn".to_string(), "24h".to_string()],
+            &["retention"],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "flag provided but not defined: -retentionn"
+        );
+
+        let err = parse(&["-read_auth".to_string()], &[], &["read-auth"]).unwrap_err();
+        assert_eq!(err.to_string(), "flag provided but not defined: -read_auth");
+
+        let err = parse(&["--bogus=1".to_string()], &[], &[]).unwrap_err();
+        assert_eq!(err.to_string(), "flag provided but not defined: -bogus");
+    }
+
+    #[test]
+    fn keeps_terminal_double_dash() {
+        let a = p(&["-db", "x", "--", "-bogus"], &["db"], &[]);
+        assert_eq!(a.get("db"), Some("x"));
+        assert_eq!(a.rest, vec!["-bogus"]);
     }
 }

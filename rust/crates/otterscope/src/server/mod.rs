@@ -12,7 +12,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderValue, Method, Request, StatusCode, Uri, header};
-use axum::middleware::Next;
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
@@ -85,52 +85,15 @@ impl Default for Options {
 
 impl Options {
     pub fn from_config(config: &Config) -> Self {
-        let mut options = Options {
+        Options {
             read_auth: config.read_auth,
             base_path: config.base_path.clone(),
+            allowed_origins: config.allowed_origins.clone(),
             judge_models: config.judge_models.clone(),
             judge_url: config.judge_url.clone(),
+            judge_key: config.judge_key.clone(),
             ..Options::default()
-        };
-        options = options.with_environment();
-        options
-    }
-
-    /// Configuration a caller that did not go through `config::load` can rely
-    /// on: the documented `OTTERSCOPE_*` variables.
-    pub fn from_env() -> Self {
-        Options::default().with_environment()
-    }
-
-    fn with_environment(self) -> Self {
-        let mut options = self;
-        if let Ok(value) = std::env::var("OTTERSCOPE_READ_AUTH") {
-            options.read_auth = parse_bool(&value).unwrap_or(options.read_auth);
         }
-        if let Ok(value) = std::env::var("OTTERSCOPE_BASE_PATH") {
-            options.base_path = value;
-        }
-        if let Ok(value) = std::env::var(guard::ALLOWED_ORIGINS_ENV) {
-            options.allowed_origins = value;
-        }
-        if let Ok(value) = std::env::var("OTTERSCOPE_JUDGE_MODELS") {
-            options.judge_models = crate::config::parse_model_list(&value);
-        }
-        if let Ok(value) = std::env::var("OTTERSCOPE_JUDGE_URL") {
-            options.judge_url = value;
-        }
-        options.judge_key = std::env::var("OTTERSCOPE_JUDGE_KEY")
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .unwrap_or_default();
-        options
-    }
-}
-
-fn parse_bool(value: &str) -> Option<bool> {
-    match value.trim() {
-        "1" | "t" | "T" | "true" | "TRUE" | "True" => Some(true),
-        "0" | "f" | "F" | "false" | "FALSE" | "False" => Some(false),
-        _ => None,
     }
 }
 
@@ -167,7 +130,41 @@ pub fn build_with_hub(backend: Arc<dyn ApiBackend>, mut options: Options, hub: H
         None => api.route("/mcp", post(mcp_unavailable)),
     };
     let app = App { state, api };
-    Router::new().fallback(dispatch).with_state(app)
+    let base_path = app.state.options.base_path.clone();
+    Router::new()
+        .fallback(dispatch)
+        .with_state(app)
+        .layer(middleware::from_fn(move |req, next| {
+            let base_path = base_path.clone();
+            async move { harden(base_path, req, next).await }
+        }))
+}
+
+/// Stamp the headers every response carries and turn axum's plain `413` into
+/// the JSON envelope. The middleware wraps the fallback too, so auth failures
+/// and prefix misses are hardened as well.
+async fn harden(base_path: String, req: Request<Body>, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+    let api = api_path(&base_path, &path);
+    let mut response = next.run(req).await;
+    if response.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        response = json_error(StatusCode::PAYLOAD_TOO_LARGE, "request body too large");
+    }
+    guard::stamp_security_headers(response.headers_mut());
+    if api {
+        insert_header(response.headers_mut(), header::CACHE_CONTROL, "no-store");
+    }
+    response
+}
+
+/// Whether a request path addresses the JSON API or MCP, including paths that
+/// sit outside the mount prefix (they still must not be cached as an API miss).
+fn api_path(base_path: &str, path: &str) -> bool {
+    let mounted = basepath::strip(base_path, path).unwrap_or(path);
+    mounted == "/api"
+        || mounted.starts_with("/api/")
+        || mounted == "/mcp"
+        || mounted.starts_with("/mcp/")
 }
 
 #[derive(Clone)]
@@ -220,25 +217,27 @@ async fn dispatch(State(app): State<App>, mut req: Request<Body>) -> Response {
         scope: None,
     };
     if auth.read_auth && auth_protected(&path) {
-        match presented_token(&req).and_then(|token| app.state.backend.authenticate_token(&token)) {
+        match presented_token(&req, &path)
+            .and_then(|token| app.state.backend.authenticate_token(&token))
+        {
             Some(token) => auth.scope = Some(token.scope),
             None => return json_error(StatusCode::UNAUTHORIZED, "read token required"),
         }
     }
     req.extensions_mut().insert(auth);
 
-    let mut response =
-        match guard::check(&app.state.allow, &req, &path) {
-            Some(refusal) => refusal,
-            None if is_ui_path(&path) => {
-                ui::response(&path, req.method(), &app.state.options.base_path)
-            }
-            None => app.api.clone().oneshot(req).await.unwrap_or_else(|_| {
-                json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
-            }),
-        };
-    guard::stamp_security_headers(response.headers_mut());
-    response
+    match guard::check(&app.state.allow, &req, &path) {
+        Some(refusal) => refusal,
+        None if is_ui_path(&path) => {
+            ui::response(&path, req.method(), &app.state.options.base_path)
+        }
+        None => app
+            .api
+            .clone()
+            .oneshot(req)
+            .await
+            .unwrap_or_else(|_| json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error")),
+    }
 }
 
 /// `/healthz` stays open so a liveness probe needs no credential; so do public
@@ -259,7 +258,7 @@ fn is_ui_path(path: &str) -> bool {
         || path == "/healthz")
 }
 
-fn presented_token(req: &Request<Body>) -> Option<String> {
+fn presented_token(req: &Request<Body>, path: &str) -> Option<String> {
     let header = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -269,7 +268,12 @@ fn presented_token(req: &Request<Body>) -> Option<String> {
     if !token.is_empty() {
         return Some(token.to_string());
     }
-    query_param(req.uri().query(), "token").map(str::to_string)
+    // EventSource cannot set headers, so the SSE endpoint is the one route that
+    // may carry its token in the query string.
+    if path == "/api/stream" {
+        return query_param(req.uri().query(), "token").map(str::to_string);
+    }
+    None
 }
 
 fn rewrite_path(req: &mut Request<Body>, path: &str) {

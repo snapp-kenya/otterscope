@@ -14,8 +14,9 @@ Requests outside it get `404`; the SPA is only served for non-API paths.
 ## Auth and guard
 
 - `Authorization: Bearer <token>` (read or admin scope) when `-read-auth` is on.
-  `GET /api/stream` also accepts `?token=<token>` because EventSource cannot set
-  headers.
+  `GET /api/stream` is the only route that also accepts `?token=<token>`, because
+  EventSource cannot set headers; every other protected route requires the
+  header and answers `401` to a query token.
 - Public: `/healthz`, `/api/shared/{token}`, and the SPA.
 - Read token: every `GET`. Admin token: every mutating route (assertions, alerts,
   saved views, tokens, evaluate, share minting/revocation).
@@ -24,11 +25,14 @@ Requests outside it get `404`; the SPA is only served for non-API paths.
 - `Origin`/`Host` allow-list on `/api/*` and `/mcp`: loopback, IP literals, and
   hosts named in `OTTERSCOPE_ALLOWED_ORIGINS`. Foreign origins/hosts: `403`.
 - Writes with a body must declare `application/json`, else `415`.
-- Request bodies are capped at 1 MiB (`413`).
-- Every response carries `Content-Security-Policy`, `X-Content-Type-Options:
-  nosniff`, `Referrer-Policy: no-referrer`. JSON API responses and CSV exports
-  add `Cache-Control: no-store`.
-- Unknown `/api/*` paths are `404` JSON; only non-API paths fall back to the SPA.
+- Request bodies are capped at 1 MiB; a larger body is `413` with the JSON
+  envelope and `Cache-Control: no-store`.
+- Every response — including `401`s, prefix misses and `413`s — carries
+  `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: no-referrer`. JSON API responses, MCP responses and CSV
+  exports add `Cache-Control: no-store`.
+- Unknown `/api/*` paths are `404` with `{"error":"not found"}`; only non-API
+  paths fall back to the SPA.
 
 ## Health and metrics
 
@@ -180,7 +184,9 @@ the server.
 
 `POST /api/alerts` (admin) — body `{ "project"?, "name", "type", "threshold",
 "windowSecs"?, "config"?, "webhookUrl", "settleSecs"? }`. `windowSecs` defaults
-to 3600; `enabled` is true and `firing`/`pendingSinceNs` are watcher-owned.
+to 3600 and `settleSecs` to 0 (notify as soon as the condition changes); only
+the UI's new-alert draft starts at 300s. `enabled` is true and
+`firing`/`pendingSinceNs` are watcher-owned.
 `201` with the redacted alert. Invalid rule or non-public webhook host: `400`.
 Duplicate name: `409`.
 
@@ -221,6 +227,6 @@ secret.
 
 `POST /mcp` — MCP Streamable HTTP (JSON-RPC 2.0). Guarded and token-protected
 like the API. This build always mounts the MCP router, so the endpoint answers
-JSON-RPC: a valid request returns `200` with a JSON-RPC result, and protocol
-errors come back as JSON-RPC errors. A build without an MCP router would answer
-`501`.
+JSON-RPC: a valid request returns `200` with a JSON-RPC result and
+`Cache-Control: no-store`, and protocol errors come back as JSON-RPC errors. A
+build without an MCP router would answer `501`.

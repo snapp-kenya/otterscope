@@ -82,7 +82,13 @@ pub(crate) fn router() -> Router<ServerState> {
             delete(delete_alert).route_layer(admin()),
         )
         .route("/api/stream", get(stream_endpoint))
+        .fallback(api_not_found)
         .layer(axum::extract::DefaultBodyLimit::max(super::MAX_BODY_BYTES))
+}
+
+/// Unknown API paths are a JSON envelope, never the SPA and never an empty 404.
+async fn api_not_found() -> Response {
+    json_error(StatusCode::NOT_FOUND, "not found")
 }
 
 // ---------------------------------------------------------------- wire types
@@ -1081,10 +1087,7 @@ async fn runs_csv(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> 
     );
     for run in runs {
         let run = run_json(run);
-        let cost = run
-            .cost_usd
-            .map(|cost| format!("{cost}"))
-            .unwrap_or_default();
+        let cost = run.cost_usd.map(format_cost).unwrap_or_default();
         write_csv_row(
             &mut csv,
             &[
@@ -1132,6 +1135,18 @@ async fn runs_csv(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> 
         );
     }
     response
+}
+
+/// Fixed decimals at the same thresholds as the UI, so CSV consumers never see
+/// a float artefact such as `0.0050311999999999996`.
+fn format_cost(cost: f64) -> String {
+    if cost >= 1.0 {
+        format!("{cost:.2}")
+    } else if cost >= 0.01 {
+        format!("{cost:.3}")
+    } else {
+        format!("{cost:.5}")
+    }
 }
 
 fn write_csv_row(out: &mut String, fields: &[&str]) {

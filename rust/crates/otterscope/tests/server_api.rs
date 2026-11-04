@@ -178,8 +178,15 @@ async fn mcp_is_mounted_and_answers_discover() {
     discover
         .headers_mut()
         .insert("Mcp-Method", HeaderValue::from_static("server/discover"));
-    let (status, body) = send_json(&app, discover).await;
+    let (status, headers, raw) = send(&app, discover).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    let body: Value = serde_json::from_slice(&raw).expect("json");
     assert_eq!(body["result"]["resultType"], "complete");
     assert_eq!(
         body["result"]["supportedVersions"],

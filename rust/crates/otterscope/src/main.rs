@@ -47,14 +47,19 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("otterscope: {err:#}");
-            ExitCode::FAILURE
+            let code = if err.downcast_ref::<args::Error>().is_some() {
+                2
+            } else {
+                1
+            };
+            ExitCode::from(code)
         }
     }
 }
 
 fn sample(argv: &[String]) -> anyhow::Result<()> {
     let (cfg, _) = cli::load_config(argv)?;
-    let parsed = args::parse(argv, &[]).map_err(anyhow::Error::msg)?;
+    let parsed = args::parse(argv, &["config", "db", "runs"], &[])?;
     let db = parsed.string("db", &cfg.db);
     let runs = parsed.int("runs", 60).map_err(anyhow::Error::msg)?;
 
@@ -91,7 +96,26 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
     // OTTERSCOPE_* env vars; explicit flags below then override them, giving
     // precedence flags > env > file > built-in defaults.
     let (mut cfg, _) = cli::load_config(argv)?;
-    let parsed = args::parse(argv, &["read-auth"]).map_err(anyhow::Error::msg)?;
+    let parsed = args::parse(
+        argv,
+        &[
+            "config",
+            "listen",
+            "otlp",
+            "db",
+            "pricing",
+            "judge-url",
+            "judge-models",
+            "retention",
+            "alert-interval",
+            "ingest-rate",
+            "ingest-burst",
+            "ingest-max-spans",
+            "ingest-max-trace-ids",
+            "base-path",
+        ],
+        &["read-auth"],
+    )?;
     if parsed.get("listen").is_some() {
         cfg.listen = parsed.string("listen", &cfg.listen);
     }

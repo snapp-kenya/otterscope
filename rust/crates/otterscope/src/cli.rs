@@ -63,7 +63,7 @@ pub fn token(argv: &[String]) -> anyhow::Result<()> {
             _ => anyhow::bail!("usage: otterscope token add <name> [-admin] [-db path]"),
         }
     }
-    let parsed = args::parse(rest, &["admin"]).map_err(anyhow::Error::msg)?;
+    let parsed = args::parse(rest, &["config", "db"], &["admin"])?;
     let db = parsed.string("db", &cfg.db);
     let store = open_store(&db)?;
 
@@ -127,7 +127,7 @@ pub fn project(argv: &[String]) -> anyhow::Result<()> {
             _ => anyhow::bail!("usage: otterscope project add <name> [-db path]"),
         }
     }
-    let parsed = args::parse(rest, &[]).map_err(anyhow::Error::msg)?;
+    let parsed = args::parse(rest, &["config", "db"], &[])?;
     let db = parsed.string("db", &cfg.db);
     let store = open_store(&db)?;
 
@@ -144,7 +144,11 @@ pub fn project(argv: &[String]) -> anyhow::Result<()> {
     } else {
         for project in store.list_projects()? {
             let key = if project.ingest_key.is_empty() {
-                "(none — open ingest)"
+                if cfg.read_auth {
+                    "(keyless ingest disabled — an ingest key is required)"
+                } else {
+                    "(none — open ingest)"
+                }
             } else {
                 project.ingest_key.as_str()
             };
@@ -156,7 +160,7 @@ pub fn project(argv: &[String]) -> anyhow::Result<()> {
 
 pub fn backup(argv: &[String]) -> anyhow::Result<()> {
     let (cfg, _) = load_config(argv)?;
-    let parsed = args::parse(argv, &[]).map_err(anyhow::Error::msg)?;
+    let parsed = args::parse(argv, &["config", "db", "o"], &[])?;
     let db = parsed.string("db", &cfg.db);
     let Some(out) = parsed.get("o").filter(|out| !out.is_empty()) else {
         anyhow::bail!("usage: otterscope backup -o <file> [-db path]");
@@ -169,7 +173,7 @@ pub fn backup(argv: &[String]) -> anyhow::Result<()> {
 
 pub fn renormalize(argv: &[String]) -> anyhow::Result<()> {
     let (cfg, _) = load_config(argv)?;
-    let parsed = args::parse(argv, &[]).map_err(anyhow::Error::msg)?;
+    let parsed = args::parse(argv, &["config", "db", "pricing"], &[])?;
     let db = parsed.string("db", &cfg.db);
     let pricing_path = parsed.string("pricing", &cfg.pricing);
 

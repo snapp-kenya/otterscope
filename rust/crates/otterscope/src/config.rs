@@ -35,6 +35,12 @@ pub struct Config {
     pub max_spans_per_batch: i64,
     pub max_trace_ids_per_batch: i64,
     pub base_path: String,
+    /// Extra browser origins a reverse-proxied deployment may come from
+    /// (`OTTERSCOPE_ALLOWED_ORIGINS`).
+    pub allowed_origins: String,
+    /// Key for the OpenAI-compatible judge endpoint
+    /// (`OTTERSCOPE_JUDGE_KEY`, falling back to `OPENAI_API_KEY`).
+    pub judge_key: String,
 }
 
 impl Default for Config {
@@ -54,6 +60,8 @@ impl Default for Config {
             max_spans_per_batch: DEFAULT_MAX_SPANS_PER_BATCH,
             max_trace_ids_per_batch: DEFAULT_MAX_TRACE_IDS_PER_BATCH,
             base_path: String::new(),
+            allowed_origins: String::new(),
+            judge_key: String::new(),
         }
     }
 }
@@ -168,6 +176,12 @@ impl Config {
         if let Some(v) = s("OTTERSCOPE_JUDGE_MODELS") {
             self.judge_models = parse_model_list(&v);
         }
+        if let Some(v) = s("OTTERSCOPE_ALLOWED_ORIGINS") {
+            self.allowed_origins = v;
+        }
+        self.judge_key = s("OTTERSCOPE_JUDGE_KEY")
+            .or_else(|| s("OPENAI_API_KEY"))
+            .unwrap_or_default();
         if let Some(v) = s("OTTERSCOPE_READ_AUTH") {
             self.read_auth = parse_bool(&v).map_err(|e| format!("OTTERSCOPE_READ_AUTH: {e}"))?;
         }
@@ -318,6 +332,26 @@ mod tests {
         assert!(c.read_auth);
         assert_eq!(c.listen, ":9999");
         assert_eq!(c.db, "otterscope.db");
+    }
+
+    #[test]
+    fn env_supplies_origins_and_the_judge_key_fallback() {
+        let c = Config::load("", |k| match k {
+            "OTTERSCOPE_ALLOWED_ORIGINS" => Some("https://obs.corp.example".into()),
+            "OPENAI_API_KEY" => Some("sk-fallback".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(c.allowed_origins, "https://obs.corp.example");
+        assert_eq!(c.judge_key, "sk-fallback");
+
+        let c = Config::load("", |k| match k {
+            "OTTERSCOPE_JUDGE_KEY" => Some("sk-explicit".into()),
+            "OPENAI_API_KEY" => Some("sk-fallback".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(c.judge_key, "sk-explicit");
     }
 
     #[test]

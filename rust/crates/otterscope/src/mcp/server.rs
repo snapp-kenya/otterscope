@@ -276,6 +276,9 @@ impl<S: McpStore> Handler<S> {
             HeaderValue::from_static(reply.content_type),
         );
         response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        response
     }
 }
 

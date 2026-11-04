@@ -1349,6 +1349,26 @@ async fn same_origin_json_write_accepted() {
     assert_eq!(body["views"].as_array().map(Vec::len), Some(0));
 }
 
+#[test]
+fn options_from_config_copy_the_resolved_values() {
+    let config = crate::config::Config {
+        read_auth: true,
+        base_path: "/flagbase".into(),
+        allowed_origins: "https://obs.corp.example".into(),
+        judge_models: vec!["gpt-4o-mini".into()],
+        judge_url: "https://judge.example/v1".into(),
+        judge_key: "sk-test".into(),
+        ..crate::config::Config::default()
+    };
+    let options = Options::from_config(&config);
+    assert!(options.read_auth);
+    assert_eq!(options.base_path, "/flagbase");
+    assert_eq!(options.allowed_origins, "https://obs.corp.example");
+    assert_eq!(options.judge_models, vec!["gpt-4o-mini"]);
+    assert_eq!(options.judge_url, "https://judge.example/v1");
+    assert_eq!(options.judge_key, "sk-test");
+}
+
 #[tokio::test]
 async fn security_headers_set() {
     let fake = Fake::new();
@@ -1401,6 +1421,74 @@ async fn security_headers_set() {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.starts_with("text/html"))
     );
+}
+
+#[tokio::test]
+async fn unknown_api_path_is_json_404() {
+    let fake = Fake::new();
+    let app = app(&fake);
+    let (status, headers, body) = send(&app, make_request(Method::GET, "/api/nope", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/json")
+    );
+    assert_eq!(
+        headers
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    let body: Value = serde_json::from_slice(&body).expect("JSON envelope");
+    assert_eq!(body["error"], "not found");
+}
+
+#[tokio::test]
+async fn security_headers_cover_auth_failures_and_prefix_misses() {
+    let fake = Fake::new();
+    let options = Options {
+        read_auth: true,
+        base_path: BASE.into(),
+        ..Options::default()
+    };
+    let app = app_with(&fake, options);
+    for (uri, expected) in [
+        (format!("{BASE}/api/runs"), StatusCode::UNAUTHORIZED),
+        ("/api/runs".to_string(), StatusCode::NOT_FOUND),
+    ] {
+        let (status, headers, _) = send(&app, make_request(Method::GET, &uri, None)).await;
+        assert_eq!(status, expected, "{uri}");
+        assert_eq!(
+            headers
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|value| value.to_str().ok()),
+            Some(super::guard::CONTENT_SECURITY_POLICY),
+            "{uri}"
+        );
+        assert_eq!(
+            headers
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .and_then(|value| value.to_str().ok()),
+            Some("nosniff"),
+            "{uri}"
+        );
+        assert_eq!(
+            headers
+                .get(header::REFERRER_POLICY)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-referrer"),
+            "{uri}"
+        );
+        assert_eq!(
+            headers
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store"),
+            "{uri}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2041,6 +2129,17 @@ async fn read_auth() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = token_send(&app, Method::GET, "/api/stream?token=bad", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Query-string auth is only for EventSource; other reads need the header.
+    let (status, _) = token_send(
+        &app,
+        Method::GET,
+        &format!("/api/runs?token={}", token.token),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -2213,15 +2312,36 @@ async fn duplicate_name_is_conflict() {
 }
 
 #[tokio::test]
-async fn oversized_body_is_rejected() {
+async fn oversized_body_is_rejected_with_the_json_envelope() {
     let fake = Fake::new();
     let app = app(&fake);
     let body = format!(
         r#"{{"name":"{}","params":{{}}}}"#,
         "x".repeat(super::MAX_BODY_BYTES)
     );
-    let (status, _, _) = send(&app, make_request(Method::POST, "/api/views", Some(&body))).await;
+    let (status, headers, body) =
+        send(&app, make_request(Method::POST, "/api/views", Some(&body))).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/json")
+    );
+    assert_eq!(
+        headers
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    assert_eq!(
+        headers
+            .get(header::CONTENT_SECURITY_POLICY)
+            .and_then(|value| value.to_str().ok()),
+        Some(super::guard::CONTENT_SECURITY_POLICY)
+    );
+    let body: Value = serde_json::from_slice(&body).expect("JSON envelope");
+    assert_eq!(body["error"], "request body too large");
 }
 
 #[tokio::test]
@@ -2281,6 +2401,27 @@ async fn csv_truncation_is_reported() {
     let (_, headers, body) = send(&app, make_request(Method::GET, "/api/runs.csv", None)).await;
     assert!(headers.get("x-otterscope-truncated").is_none());
     assert_eq!(body_text(&body).lines().count(), 4);
+}
+
+#[tokio::test]
+async fn csv_cost_is_fixed_decimal_without_float_noise() {
+    let fake = Fake::new();
+    seed_run(&fake, "r-cost", 1000);
+    fake.lock().runs[0].0.cost_usd = Some(0.005_031_199_999_999_999_6);
+    let app = app(&fake);
+
+    let (status, _, body) = send(&app, make_request(Method::GET, "/api/runs.csv", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    let text = body_text(&body);
+    let mut rows = text.lines();
+    let header: Vec<&str> = rows.next().expect("header").split(',').collect();
+    let row: Vec<&str> = rows.next().expect("row").split(',').collect();
+    let cost = header
+        .iter()
+        .position(|name| *name == "cost_usd")
+        .expect("cost column");
+    assert_eq!(row[cost], "0.00503");
+    assert!(!text.contains("0.0050311999999999996"), "{text}");
 }
 
 // ------------------------------------------------------------------ auth/admin

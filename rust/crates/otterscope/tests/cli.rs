@@ -159,6 +159,45 @@ fn project_add_prints_a_key_that_resolves() {
 }
 
 #[test]
+fn project_list_reports_keyless_ingest_disabled_under_read_auth() {
+    let (_dir, db) = temp_db("project-auth");
+    let output = run_with_env(
+        &["project", "list", "-db", &db],
+        &[("OTTERSCOPE_READ_AUTH", "1")],
+    );
+    assert_success(&output);
+    let listed = stdout(&output);
+    assert!(
+        listed.contains("(keyless ingest disabled — an ingest key is required)"),
+        "{listed}"
+    );
+    assert!(!listed.contains("open ingest"), "{listed}");
+}
+
+#[test]
+fn unknown_flags_exit_two_with_go_wording() {
+    for (args, flag) in [
+        (vec!["token", "list", "-bogus=1"], "-bogus"),
+        (vec!["serve", "-retentionn", "24h"], "-retentionn"),
+        (vec!["serve", "-read_auth"], "-read_auth"),
+    ] {
+        let output = run(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{args:?}\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).contains(&format!("flag provided but not defined: {flag}")),
+            "{args:?}\n{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
 fn backup_writes_a_private_working_snapshot() {
     let (dir, db) = temp_db("backup");
     assert_success(&run(&["token", "add", "backup-me", "-db", &db]));

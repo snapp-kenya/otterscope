@@ -19,8 +19,6 @@ use super::json_error;
 pub const CONTENT_SECURITY_POLICY: &str =
     "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'";
 
-pub const ALLOWED_ORIGINS_ENV: &str = "OTTERSCOPE_ALLOWED_ORIGINS";
-
 pub fn stamp_security_headers(headers: &mut HeaderMap) {
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
