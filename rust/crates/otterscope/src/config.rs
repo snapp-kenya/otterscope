@@ -140,37 +140,19 @@ impl Config {
         if let Some(v) = parsed.get("judge-models") {
             cfg.judge_models = parse_model_list(v);
         }
-        if let Some(v) = parsed.get("retention") {
-            cfg.retention = parse_duration(v).map_err(anyhow::Error::msg)?;
-        }
-        if let Some(v) = parsed.get("alert-interval") {
-            cfg.alert_interval = parse_duration(v).map_err(anyhow::Error::msg)?;
-        }
-        cfg.read_auth = parsed
-            .bool("read-auth", cfg.read_auth)
-            .map_err(anyhow::Error::msg)?;
-        if let Some(v) = parsed.get("ingest-rate") {
-            cfg.ingest_rate = v.parse().map_err(|_| {
-                anyhow::anyhow!("invalid value {v:?} for flag -ingest-rate: parse error")
+        cfg.retention = duration_flag(&parsed, "retention", cfg.retention)?;
+        cfg.alert_interval = duration_flag(&parsed, "alert-interval", cfg.alert_interval)?;
+        cfg.read_auth = parsed.bool("read-auth", cfg.read_auth)?;
+        cfg.ingest_rate = parsed.float("ingest-rate", cfg.ingest_rate)?;
+        cfg.ingest_burst = parsed.float("ingest-burst", cfg.ingest_burst)?;
+        cfg.max_spans_per_batch = parsed.int("ingest-max-spans", cfg.max_spans_per_batch)?;
+        cfg.max_trace_ids_per_batch =
+            parsed.int("ingest-max-trace-ids", cfg.max_trace_ids_per_batch)?;
+        if let Some(raw) = parsed.get("base-path") {
+            cfg.base_path = basepath::normalize(raw).map_err(|err| {
+                crate::args::Error::new(format!("invalid value {raw:?} for flag -base-path: {err}"))
             })?;
         }
-        if let Some(v) = parsed.get("ingest-burst") {
-            cfg.ingest_burst = v.parse().map_err(|_| {
-                anyhow::anyhow!("invalid value {v:?} for flag -ingest-burst: parse error")
-            })?;
-        }
-        if let Some(v) = parsed.get("ingest-max-spans") {
-            cfg.max_spans_per_batch = v.parse().map_err(|_| {
-                anyhow::anyhow!("invalid value {v:?} for flag -ingest-max-spans: parse error")
-            })?;
-        }
-        if let Some(v) = parsed.get("ingest-max-trace-ids") {
-            cfg.max_trace_ids_per_batch = v.parse().map_err(|_| {
-                anyhow::anyhow!("invalid value {v:?} for flag -ingest-max-trace-ids: parse error")
-            })?;
-        }
-        cfg.base_path = basepath::normalize(&parsed.string("base-path", &cfg.base_path))
-            .map_err(anyhow::Error::msg)?;
         Ok(cfg)
     }
 
@@ -319,6 +301,19 @@ fn parse_bool(v: &str) -> Result<bool, String> {
         "1" | "t" | "T" | "true" | "TRUE" | "True" => Ok(true),
         "0" | "f" | "F" | "false" | "FALSE" | "False" => Ok(false),
         _ => Err(format!("invalid bool {v:?}")),
+    }
+}
+
+fn duration_flag(
+    parsed: &crate::args::Parsed,
+    name: &str,
+    current: Duration,
+) -> Result<Duration, crate::args::Error> {
+    match parsed.get(name) {
+        None => Ok(current),
+        Some(value) => parse_duration(value).map_err(|err| {
+            crate::args::Error::new(format!("invalid value {value:?} for flag -{name}: {err}"))
+        }),
     }
 }
 

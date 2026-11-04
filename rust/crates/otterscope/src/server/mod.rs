@@ -59,6 +59,7 @@ pub use backend::{
 pub use evaluator::Evaluator;
 pub use sink::{StoreSink, price_steps};
 pub use stream::Hub;
+pub use ui::base_path_warning;
 
 /// Default cap on one JSON request body. The API only ever reads small
 /// objects; a larger body is a mistake or an attempt to hold memory.

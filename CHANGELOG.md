@@ -15,7 +15,9 @@ commit history has the rest.
   config file that still contains them fails to parse rather than silently
   ignoring the value. Deployments that published 8317/4318 must publish port 80
   instead; the host-side port is a deployment choice (`-p 8080:80`, Istio,
-  NodePort, …). Non-root container runs need `CAP_NET_BIND_SERVICE`.
+  NodePort, …). Docker lets the non-root image bind 80 because its runtime sets
+  `net.ipv4.ip_unprivileged_port_start=0`; Kubernetes/containerd and native
+  runs need `CAP_NET_BIND_SERVICE`.
   TLS is not this service's job.
 - The HTTP JSON API is redesigned for the Rust server: `camelCase` fields,
   typed enums for run status, step kind and token scope, one
@@ -101,6 +103,16 @@ commit history has the rest.
 - `otterscope_db_size_bytes` includes the WAL and SHM files, which is where
   recent data actually lives in WAL mode.
 - Dependency advisories in the frontend tree are cleared.
+- `serve` exits 2 (Go's flag-parse code) for an invalid `-read-auth`,
+  `-retention`, `-ingest-rate`, `-base-path` or similar flag value instead of
+  reporting a runtime failure with exit 1. `-h`/`-help` now prints each
+  command's usage to stdout and exits 0; unknown flags still exit 2.
+- Starting a root-built image with `-base-path` logs a prominent warning that
+  the embedded UI was built for another base, instead of silently serving a UI
+  that calls the wrong paths. The API, MCP and OTLP receiver still start.
+- `project list` no longer claims keyless ingest is open when the CLI cannot
+  see the server's `-read-auth` setting; the explicit disabled wording remains
+  when `OTTERSCOPE_READ_AUTH` is visible in its own environment.
 
 ### Security
 

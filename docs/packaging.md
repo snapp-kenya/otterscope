@@ -55,11 +55,15 @@ and `serve` is the default command.
 
 The image exposes exactly one port, **80**: the server's single listener for
 the UI, JSON API, `/mcp`, share links and OTLP ingest. The image stays non-root
-and never switches to root; binding 80 as uid 65532 therefore needs
-`CAP_NET_BIND_SERVICE`. Run it with `--cap-drop ALL --cap-add
-NET_BIND_SERVICE`, and choose the host-side mapping yourself (for example
-`-p 8080:80`; publishing is a platform decision, the process always listens on
-80 inside the container):
+and never switches to root. Under Docker, uid 65532 can bind 80 without
+`CAP_NET_BIND_SERVICE` because the runtime sets
+`net.ipv4.ip_unprivileged_port_start=0`; Kubernetes/containerd keeps the default
+boundary at 1024, so those deployments need the capability (the manifests add
+it). Native runs need root or the capability. The `docker run` example below
+still drops all capabilities and adds only `NET_BIND_SERVICE`, which is
+harmless under Docker and keeps the command portable; choose the host-side
+mapping yourself (for example `-p 8080:80`; publishing is a platform decision,
+the process always listens on 80 inside the container):
 
 ```sh
 docker run --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
@@ -72,3 +76,20 @@ docker run --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
 except `NET_BIND_SERVICE`, named data volume, and read auth on. Mint the first
 read or admin token and a project ingest key with the `docker compose run`
 commands documented in that file.
+
+### Base path
+
+The stock image is built for the root. A deployment under a path prefix — for
+example `serve -base-path /otterscope` behind a path-based Ingress — **requires
+an image built with the matching build argument**, because Vite bakes the UI's
+router and API base into the JavaScript:
+
+```sh
+docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
+```
+
+The server still starts when `-base-path` and the baked base disagree; the API,
+OTLP receiver and MCP remain valid. It logs a prominent `WARN` naming the build
+arg to use, and the UI will not work because its router and API calls target
+the other base. `deploy/k8s/ingress.yaml` documents the rest of the prefixed
+setup (configuration, probe paths and the Ingress rule).

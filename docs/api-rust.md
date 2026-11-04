@@ -245,6 +245,9 @@ port. It is prefix-aware like everything else (`/otterscope/v1/traces`).
   token bucket of 50/s with burst 100 (`429`). Configure the batch and rate
   limits with `-ingest-max-spans`, `-ingest-max-trace-ids`, `-ingest-rate` and
   `-ingest-burst`.
+- An OTLP body over the cap is `413` with the same `{"error": "request body
+  too large"}` envelope as every other failure (the hardening layer rewrites
+  the transport error), not a bare HTTP `413`.
 - `200` with an OTLP export response. Spans refused because their span id
   belongs to another service are reported in `partialSuccess.rejectedSpans`,
   not silently dropped.

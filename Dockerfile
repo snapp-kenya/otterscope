@@ -46,8 +46,9 @@ env TMPDIR=/data \
 workdir /data
 volume ["/data"]
 user 65532:65532
-# The server always listens on port 80. As uid 65532 that needs
-# CAP_NET_BIND_SERVICE at run time (the image is never run as root):
+# The server always listens on port 80. Docker lets uid 65532 bind it without
+# extra capabilities (it sets net.ipv4.ip_unprivileged_port_start=0);
+# Kubernetes/containerd keeps 1024 privileged and needs NET_BIND_SERVICE:
 #   docker run --cap-drop ALL --cap-add NET_BIND_SERVICE -p 8080:80 ...
 expose 80
 entrypoint ["/usr/local/bin/otterscope"]

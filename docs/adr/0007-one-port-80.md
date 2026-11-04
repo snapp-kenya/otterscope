@@ -36,14 +36,18 @@ ingress's job too.
 - **Exposure is a deployment choice.** Compose, Istio, Kubernetes and `docker
   run` decide the host-side port. The application only guarantees the container
   side: 80. TLS is out of scope.
-- **Containers stay non-root.** The image runs as uid 65532 and binds 80 with
-  `CAP_NET_BIND_SERVICE`; the container security contexts drop `ALL` and add
-  only that capability. The image is never switched to root.
+- **Containers stay non-root.** The image runs as uid 65532 and binds 80.
+  Docker permits that without extra capabilities because its runtime sets
+  `net.ipv4.ip_unprivileged_port_start=0`; Kubernetes/containerd keeps the
+  default boundary and needs `CAP_NET_BIND_SERVICE`, so the container security
+  contexts drop `ALL` and add only that capability. The image is never switched
+  to root.
 
 ## Consequences
 
-- Local host runs need privilege: root, `CAP_NET_BIND_SERVICE` (or a container).
-  There is deliberately no unprivileged "dev port" escape hatch.
+- Native host runs need privilege: root or `CAP_NET_BIND_SERVICE`. A Docker run
+  does not need the capability; a Kubernetes/containerd run does. There is
+  deliberately no unprivileged "dev port" escape hatch.
 - Old deployments must republish to port 80 (`-p 8080:80`, or a Service/Ingress
   targetPort of 80) and drop `-listen`/`-otlp`. Config files carrying the removed
   keys fail to start instead of silently ignoring them.

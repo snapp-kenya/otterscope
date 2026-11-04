@@ -20,7 +20,7 @@ use std::fmt;
 pub struct Error(String);
 
 impl Error {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
 }
@@ -49,32 +49,43 @@ impl Parsed {
         self.get(name).unwrap_or(default).to_string()
     }
 
-    pub fn bool(&self, name: &str, default: bool) -> Result<bool, String> {
+    pub fn bool(&self, name: &str, default: bool) -> Result<bool, Error> {
         match self.get(name) {
             None => Ok(default),
             Some("true") | Some("1") | Some("t") | Some("T") => Ok(true),
             Some("false") | Some("0") | Some("f") | Some("F") => Ok(false),
-            Some(v) => Err(format!("invalid boolean value {v:?} for -{name}")),
+            Some(v) => Err(Error::new(format!(
+                "invalid boolean value {v:?} for -{name}"
+            ))),
         }
     }
 
-    pub fn int(&self, name: &str, default: i64) -> Result<i64, String> {
+    pub fn int(&self, name: &str, default: i64) -> Result<i64, Error> {
         match self.get(name) {
             None => Ok(default),
-            Some(v) => v
-                .parse()
-                .map_err(|_| format!("invalid value {v:?} for flag -{name}: parse error")),
+            Some(v) => v.parse().map_err(|_| {
+                Error::new(format!("invalid value {v:?} for flag -{name}: parse error"))
+            }),
         }
     }
 
-    pub fn float(&self, name: &str, default: f64) -> Result<f64, String> {
+    pub fn float(&self, name: &str, default: f64) -> Result<f64, Error> {
         match self.get(name) {
             None => Ok(default),
-            Some(v) => v
-                .parse()
-                .map_err(|_| format!("invalid value {v:?} for flag -{name}: parse error")),
+            Some(v) => v.parse().map_err(|_| {
+                Error::new(format!("invalid value {v:?} for flag -{name}: parse error"))
+            }),
         }
     }
+}
+
+/// Whether the command line asks for help. Go's `flag` package treats `-h` and
+/// `-help` as a help request for any flag set that does not define them, so the
+/// parser must not report them as unknown.
+pub fn wants_help(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| matches!(arg.as_str(), "-h" | "--h" | "-help" | "--help"))
 }
 
 /// Parse `args` (without the program name) against the subcommand's known flag

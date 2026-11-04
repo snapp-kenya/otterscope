@@ -195,17 +195,20 @@ whole app under `/otterscope` with one path rule and no rewrite annotation:
 the app strips the prefix itself. Enabling it needs all of these, because a
 base path is a build-time + runtime setting, not just an Ingress rewrite:
 
-1. **Build the image with the same prefix.** The React bundle bakes its API
-   and router base into the JavaScript at build time:
+1. **Build the image with the same prefix.** A prefixed deployment requires
+   the matching build argument: the stock image is root-only, and the React
+   bundle bakes its API and router base into the JavaScript at build time.
 
    ```sh
-   docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope \
-     -t registry.example/otterscope:basepath .
+   docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
    ```
 
    A root-built release image under this Ingress serves the HTML but its JS
    calls `/api`, which the Ingress does not route. The server rewrites asset
-   URLs in `index.html` at request time, but not the JS bundle.
+   URLs in `index.html` at request time, but not the JS bundle. If the baked
+   base and `OTTERSCOPE_BASE_PATH` disagree the server still starts (API, MCP
+   and OTLP remain valid) but logs a prominent `WARN` naming the build arg to
+   use, and the UI will not work.
 2. Set `OTTERSCOPE_BASE_PATH: "/otterscope"` and
    `OTTERSCOPE_ALLOWED_ORIGINS: "https://otterscope.example.com"` in
    `configmap.yaml`.
@@ -322,8 +325,11 @@ Standard:
   path; `TMPDIR` and `SQLITE_TMPDIR` already point at `/data`;
 - `allowPrivilegeEscalation: false`, capabilities `drop: [ALL]`;
 - `NET_BIND_SERVICE` is the single capability added, only for the server
-  container, because uid 65532 binds port 80. The backup container does not
-  bind and does not get it. If your cluster rejects that capability, the
+  container, because uid 65532 binds port 80 and Kubernetes/containerd keeps
+  the unprivileged-port boundary at 1024 (Docker sets
+  `net.ipv4.ip_unprivileged_port_start=0`, so a Docker-only run would not need
+  it). The backup container does not bind and does not get it. If your cluster
+  rejects that capability, the
   alternative is the safe sysctl `net.ipv4.ip_unprivileged_port_start: "0"` in
   the pod `securityContext` where the kubelet allows it; do not solve it by
   running as root;
@@ -352,8 +358,10 @@ work around it with `runAsUser: 0`.
 - **403 `host not allowed` / `origin not allowed`** — set
   `OTTERSCOPE_ALLOWED_ORIGINS` to the browser-facing origin and restart.
 - **404 for `/api/...` or the UI** — a base path is configured but the request
-  is outside it, or the Image was built for a different base path. Requests
-  outside the prefix are 404 by design, never another app's SPA.
+  is outside it, or the image was built for a different base path. Requests
+  outside the prefix are 404 by design, never another app's SPA. A root-built
+  image started with a non-empty base path logs a `WARN` naming the build arg
+  to rebuild with; the API, MCP and OTLP receiver still work.
 - **Backup Job Pending** — the required pod affinity waits for the server pod,
   or the RWO volume is attached elsewhere. Check
   `kubectl -n otterscope describe pod -l app.kubernetes.io/component=backup`.

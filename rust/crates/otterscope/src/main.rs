@@ -20,11 +20,25 @@ fn main() -> ExitCode {
 
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let Some(command) = argv.first() else {
-        usage();
+        eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
 
     let rest = &argv[1..];
+    if is_help_flag(command) {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if !is_known_command(command) {
+        eprintln!("unknown command {command:?}");
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    }
+    if args::wants_help(rest) {
+        print_help(command);
+        return ExitCode::SUCCESS;
+    }
+
     let result = match command.as_str() {
         "serve" => serve(rest),
         "version" => {
@@ -38,7 +52,7 @@ fn main() -> ExitCode {
         "project" => cli::project(rest),
         other => {
             eprintln!("unknown command {other:?}");
-            usage();
+            eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
     };
@@ -61,7 +75,7 @@ fn sample(argv: &[String]) -> anyhow::Result<()> {
     let (cfg, _) = cli::load_config(argv)?;
     let parsed = args::parse(argv, &["config", "db", "runs"], &[])?;
     let db = parsed.string("db", &cfg.db);
-    let runs = parsed.int("runs", 60).map_err(anyhow::Error::msg)?;
+    let runs = parsed.int("runs", 60)?;
 
     let store = store::Store::open(&db)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -72,9 +86,7 @@ fn sample(argv: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn usage() {
-    eprintln!(
-        "usage: otterscope <command>
+const USAGE: &str = "usage: otterscope <command>
 
 commands:
   serve [-config f.json]  start the ingest + UI server
@@ -87,8 +99,90 @@ commands:
   backup -o <file>        write a consistent snapshot of the database
   renormalize             replay stored raw batches through the current
                           normalizer and pricing table (backfill after upgrades)
-  version                 print version"
-    );
+  version                 print version
+
+Pass -h or -help to any command for its flags.";
+
+const SERVE_USAGE: &str = "usage: otterscope serve [flags]
+
+flags:
+  -config <file>             JSON config file (or OTTERSCOPE_CONFIG)
+  -db <path>                 SQLite database file (or OTTERSCOPE_DB)
+  -pricing <file>            JSON pricing overrides merged over built-in rates
+  -judge-url <url>           OpenAI-compatible endpoint for llm_judge assertions
+  -judge-models <list>       comma-separated models an llm_judge assertion may name
+  -retention <duration>      delete runs older than this (e.g. 720h); 0 keeps all
+  -alert-interval <duration> how often to evaluate alert rules; 0 disables
+  -read-auth                 require read tokens on the API/MCP and ingest keys on OTLP
+  -ingest-rate <n>           max OTLP batches/sec per ingest key (0 = unlimited)
+  -ingest-burst <n>          ingest burst allowance per key
+  -ingest-max-spans <n>      max spans one OTLP batch may carry
+  -ingest-max-trace-ids <n>  max distinct trace ids one OTLP batch may touch
+  -base-path <prefix>        mount the whole app under a path prefix (default: root)
+  -h, -help                  print this help and exit";
+
+const TOKEN_USAGE: &str = "usage: otterscope token [add <name> | list] [-db path]
+
+flags:
+  -db <path>  SQLite database file (or OTTERSCOPE_DB)
+  -admin      with `token add`, mint an admin token that may also mutate
+  -h, -help   print this help and exit";
+
+const PROJECT_USAGE: &str = "usage: otterscope project [add <name> | list] [-db path]
+
+flags:
+  -db <path>  SQLite database file (or OTTERSCOPE_DB)
+  -h, -help   print this help and exit";
+
+const SAMPLE_USAGE: &str = "usage: otterscope sample [-db path] [-runs n] [-config file]
+
+flags:
+  -db <path>      SQLite database file (or OTTERSCOPE_DB)
+  -runs <n>       number of sample runs to seed (default 60)
+  -config <file>  JSON config file (or OTTERSCOPE_CONFIG)
+  -h, -help       print this help and exit";
+
+const BACKUP_USAGE: &str = "usage: otterscope backup -o <file> [-db path]
+
+flags:
+  -o <file>   destination for the consistent snapshot
+  -db <path>  SQLite database file (or OTTERSCOPE_DB)
+  -h, -help   print this help and exit";
+
+const RENORMALIZE_USAGE: &str = "usage: otterscope renormalize [-db path] [-pricing file]
+
+flags:
+  -db <path>       SQLite database file (or OTTERSCOPE_DB)
+  -pricing <file>  JSON pricing overrides merged over built-in rates
+  -h, -help        print this help and exit";
+
+const VERSION_USAGE: &str = "usage: otterscope version
+
+Print the version and exit.";
+
+fn is_help_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--h" | "-help" | "--help")
+}
+
+fn is_known_command(command: &str) -> bool {
+    matches!(
+        command,
+        "serve" | "version" | "sample" | "renormalize" | "backup" | "token" | "project"
+    )
+}
+
+fn print_help(command: &str) {
+    let text = match command {
+        "serve" => SERVE_USAGE,
+        "token" => TOKEN_USAGE,
+        "project" => PROJECT_USAGE,
+        "sample" => SAMPLE_USAGE,
+        "backup" => BACKUP_USAGE,
+        "renormalize" => RENORMALIZE_USAGE,
+        "version" => VERSION_USAGE,
+        _ => USAGE,
+    };
+    println!("{text}");
 }
 
 fn serve(argv: &[String]) -> anyhow::Result<()> {
@@ -96,6 +190,9 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
     // part of this: the listener is always on 80.
     let cfg = config::Config::serve(argv, |key| std::env::var(key).ok())?;
 
+    if let Some(warning) = server::base_path_warning(&cfg.base_path) {
+        tracing::warn!("{warning}");
+    }
     tracing::info!(db = %cfg.db, "starting");
     let store = std::sync::Arc::new(store::Store::open(&cfg.db)?);
 

@@ -67,6 +67,53 @@ fn index_html(base_path: &str) -> (Vec<u8>, String) {
     }
 }
 
+/// The base path Vite baked into the embedded bundle, recorded in `index.html`
+/// as a `<meta name="otterscope-base-path">` tag. `None` means the UI was not
+/// built (or predates the marker), so there is no bundle to disagree with.
+pub fn built_base_path(html: &str) -> Option<String> {
+    let marker = r#"name="otterscope-base-path""#;
+    let start = html.find(marker)?;
+    let tag = &html[start + marker.len()..];
+    let tag = &tag[..tag.find('>')?];
+    let content = tag.find(r#"content=""#)? + r#"content=""#.len();
+    let value = &tag[content..];
+    Some(value[..value.find('"')?].to_string())
+}
+
+fn base_path_warning_for(configured: &str, html: &str) -> Option<String> {
+    let built = built_base_path(html)?;
+    if built == configured {
+        return None;
+    }
+    let built_label = if built.is_empty() { "/" } else { &built };
+    let configured_label = if configured.is_empty() {
+        "/"
+    } else {
+        configured
+    };
+    let build_arg = if configured.is_empty() {
+        "OTTERSCOPE_BASE_PATH=\"\"".to_string()
+    } else {
+        format!("OTTERSCOPE_BASE_PATH={configured}")
+    };
+    Some(format!(
+        "the embedded web UI was built for base path {built_label:?} but the server is configured for \
+         {configured_label:?}: the UI will not work (its router and API calls use the build-time path). \
+         The API, MCP and OTLP receiver still work. Rebuild the image with \
+         `--build-arg {build_arg}` so the UI and server agree."
+    ))
+}
+
+/// Warn when the embedded UI was built for a different base path than the one
+/// the server is configured with. The stock image is root-only, so running it
+/// with `-base-path` otherwise fails silently in the browser: the HTML loads
+/// but its JavaScript calls `/api` and routes at the root.
+pub fn base_path_warning(configured: &str) -> Option<String> {
+    let index = Assets::get("index.html")?;
+    let html = String::from_utf8_lossy(&index.data);
+    base_path_warning_for(configured, &html)
+}
+
 /// Prefix the root-absolute `href`/`src` URLs of a built `index.html` with the
 /// mount prefix. Vite already does this when compiled with
 /// `OTTERSCOPE_BASE_PATH`; rewriting here keeps a root-built binary usable
@@ -107,3 +154,50 @@ const PLACEHOLDER: &str = r#"<!doctype html>
      or the Docker image, or build the frontend first:
      <code>cd web &amp;&amp; npm run build</code> then rebuild.</p>
 </main>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PREFIXED: &str = r#"<!doctype html><html><head>
+        <meta name="otterscope-base-path" content="/otterscope">
+        <script type="module" src="/otterscope/assets/index.js"></script>
+    </head></html>"#;
+
+    #[test]
+    fn reads_the_build_time_base_path_marker() {
+        assert_eq!(built_base_path(PREFIXED).as_deref(), Some("/otterscope"));
+        let root =
+            r#"<meta name="otterscope-base-path" content=""><script src="/assets/x.js"></script>"#;
+        assert_eq!(built_base_path(root).as_deref(), Some(""));
+        assert_eq!(
+            built_base_path(r#"<script src="/assets/x.js"></script>"#),
+            None,
+            "a bundle without the marker must not be guessed at"
+        );
+    }
+
+    #[test]
+    fn warns_when_configured_and_built_base_paths_disagree() {
+        assert!(base_path_warning_for("/otterscope", PREFIXED).is_none());
+
+        let warning = base_path_warning_for("", PREFIXED).expect("mismatch warns");
+        assert!(
+            warning.contains("built for base path \"/otterscope\""),
+            "{warning}"
+        );
+        assert!(warning.contains("configured for \"/\""), "{warning}");
+        assert!(
+            warning.contains("--build-arg OTTERSCOPE_BASE_PATH=\"\""),
+            "{warning}"
+        );
+        assert!(warning.contains("still work"), "{warning}");
+
+        let root = r#"<meta name="otterscope-base-path" content="">"#;
+        let warning = base_path_warning_for("/otterscope", root).expect("mismatch warns");
+        assert!(
+            warning.contains("--build-arg OTTERSCOPE_BASE_PATH=/otterscope"),
+            "{warning}"
+        );
+    }
+}

@@ -59,9 +59,11 @@ docker run -d --restart unless-stopped --read-only \
 ```
 
 The server has **one listener, always on port 80** — UI, API, `/mcp` and OTLP
-ingest all share it. The image is non-root (uid 65532, distroless base), so
-binding 80 needs `CAP_NET_BIND_SERVICE` and nothing else; the container never
-runs as root. The host side of the mapping is your choice: `-p 80:80` (as
+ingest all share it. The image is non-root (uid 65532, distroless base); Docker
+lets that uid bind 80 without capabilities (its runtime sets
+`net.ipv4.ip_unprivileged_port_start=0`), and the `NET_BIND_SERVICE` above keeps
+the same command portable to runtimes that keep 1024 privileged. The container
+never runs as root. The host side of the mapping is your choice: `-p 80:80` (as
 above) or, say, `-p 8080:80` if something else already owns port 80.
 `-read-auth` makes the UI and API ask for a token; mint the first token and a
 per-agent ingest key against the same volume:

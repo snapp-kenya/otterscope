@@ -68,7 +68,7 @@ pub fn token(argv: &[String]) -> anyhow::Result<()> {
     let store = open_store(&db)?;
 
     if sub == "add" {
-        let scope = if parsed.bool("admin", false).map_err(anyhow::Error::msg)? {
+        let scope = if parsed.bool("admin", false)? {
             store::Scope::Admin
         } else {
             store::Scope::Read
@@ -147,7 +147,7 @@ pub fn project(argv: &[String]) -> anyhow::Result<()> {
                 if cfg.read_auth {
                     "(keyless ingest disabled — an ingest key is required)"
                 } else {
-                    "(none — open ingest)"
+                    "(no ingest key — keyless ingest depends on the server's -read-auth setting)"
                 }
             } else {
                 project.ingest_key.as_str()

@@ -20,10 +20,13 @@ The server has **one HTTP listener, always on port 80**. The UI, JSON API,
 there. TLS and how the port is exposed are the platform's job: behind Istio the
 service is reached on port 80 and Istio terminates TLS.
 
-Port 80 is privileged. A local run therefore needs privilege — run it as root,
-grant the binary `CAP_NET_BIND_SERVICE` on Linux (`sudo setcap
-'cap_net_bind_service=+ep' ./otterscope`), or use the container below. There is
-deliberately no flag, environment variable or config key to change the port.
+Port 80 is privileged. A native run therefore needs privilege — run it as root
+or grant the binary `CAP_NET_BIND_SERVICE` on Linux (`sudo setcap
+'cap_net_bind_service=+ep' ./otterscope`). Containers are different: Docker's
+runtime sets `net.ipv4.ip_unprivileged_port_start=0`, so the non-root image can
+bind 80 there without the capability, while Kubernetes/containerd keeps the
+default boundary and needs `CAP_NET_BIND_SERVICE`. There is deliberately no
+flag, environment variable or config key to change the port.
 
 The process binds `0.0.0.0:80`, so add `-read-auth` before anything else can
 reach it; without it the API is a full read/write surface for anyone who can
@@ -37,10 +40,21 @@ one path prefix — for instance behind an ingress that routes by path rather
 than hostname — pass `-base-path /otterscope` (`OTTERSCOPE_BASE_PATH`, or
 `"basePath"` in the config file; one setting whichever source you use). Point
 exporters at `http://host/otterscope`; OTLP/HTTP appends `/v1/traces` itself,
-so ingest lands at `/otterscope/v1/traces`. Build the UI with the same value
-(`cd web && OTTERSCOPE_BASE_PATH=/otterscope bun run build`) so its asset and
-API URLs carry the prefix. The default is the root, and a request outside the
-prefix is a 404 rather than the SPA, so a misrouted path cannot land on another
+so ingest lands at `/otterscope/v1/traces`. The UI bundle bakes its router and
+API base at build time, so **a prefixed deployment requires an image built with
+the matching build arg** — the stock image is root-only. Build the UI with the
+same value (`cd web && OTTERSCOPE_BASE_PATH=/otterscope bun run build`) and the
+image with:
+
+```sh
+docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
+```
+
+If the image's baked base and the runtime `-base-path` disagree, the server
+still starts — the API, OTLP receiver and MCP remain valid — but it logs a
+prominent `WARN` and the UI will not work (its router and API calls target the
+build-time path). The default is the root, and a request outside the prefix is
+a 404 rather than the SPA, so a misrouted path cannot land on another
 application's index.
 
 Auth is off by default. Before you expose the instance, pass `-read-auth`: the
@@ -57,9 +71,12 @@ hostname through a reverse proxy, list that origin in
 request and refuses a name it was not told about.
 
 Docker works the same way. The image is a distroless build running as uid
-65532; port 80 as a non-root user needs `CAP_NET_BIND_SERVICE`, so drop all
-capabilities and add only that one. The host-side port is yours to choose —
-this example publishes loopback port 8080 to the container's 80:
+65532. Docker allows that user to bind 80 because the runtime sets
+`net.ipv4.ip_unprivileged_port_start=0`; the command below still adds only
+`CAP_NET_BIND_SERVICE` and drops everything else, so the same invocation also
+works on runtimes that keep privileged ports privileged (Kubernetes/containerd).
+The host-side port is yours to choose — this example publishes loopback port
+8080 to the container's 80:
 
 ```sh
 docker run --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
@@ -156,9 +173,10 @@ cd ../rust && cargo build --release
 sudo ./target/release/otterscope serve   # port 80 is privileged
 ```
 
-There is no port setting: the one listener is always on 80, so a local run
-needs root, `CAP_NET_BIND_SERVICE`, or the container. Everything the server
-serves — UI, API, `/mcp`, and OTLP ingest — is on that port.
+There is no port setting: the one listener is always on 80, so a native run
+needs root or `CAP_NET_BIND_SERVICE`. In a container Docker permits uid 65532 to
+bind 80 without the capability; Kubernetes/containerd needs it. Everything the
+server serves — UI, API, `/mcp`, and OTLP ingest — is on that port.
 
 `cargo build` also works without a frontend build: `build.rs` writes a
 placeholder `web/dist/index.html`, so the API, OTLP receiver and `/mcp` still

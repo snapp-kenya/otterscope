@@ -153,9 +153,17 @@ fn project_add_prints_a_key_that_resolves() {
     let listed = stdout(&list);
     assert!(listed.contains("checkout"), "{listed}");
     assert!(listed.contains(&key), "{listed}");
-    // The built-in keyless project still reports the open-ingest marker.
+    // `project` cannot see how `serve` was started, so it must not promise that
+    // keyless ingest is open; only OTTERSCOPE_READ_AUTH in its own environment
+    // lets it report the explicit disabled wording.
     assert!(listed.contains("default"), "{listed}");
-    assert!(listed.contains("(none — open ingest)"), "{listed}");
+    assert!(
+        listed.contains(
+            "(no ingest key — keyless ingest depends on the server's -read-auth setting)"
+        ),
+        "{listed}"
+    );
+    assert!(!listed.contains("open ingest)"), "{listed}");
 }
 
 #[test]
@@ -192,6 +200,78 @@ fn unknown_flags_exit_two_with_go_wording() {
         assert!(
             stderr(&output).contains(&format!("flag provided but not defined: {flag}")),
             "{args:?}\n{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn invalid_flag_values_exit_two_with_go_wording() {
+    for (args, message) in [
+        (
+            vec!["serve", "-read-auth=maybe"],
+            "invalid boolean value \"maybe\" for -read-auth",
+        ),
+        (
+            vec!["serve", "-retention", "10"],
+            "invalid value \"10\" for flag -retention: time: missing unit in duration \"10\"",
+        ),
+        (
+            vec!["serve", "-ingest-rate", "abc"],
+            "invalid value \"abc\" for flag -ingest-rate: parse error",
+        ),
+        (
+            vec!["serve", "-base-path", "/a//b"],
+            "invalid value \"/a//b\" for flag -base-path",
+        ),
+    ] {
+        let output = run(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{args:?}\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).contains(message),
+            "{args:?}\nexpected {message:?} in:\n{}",
+            stderr(&output)
+        );
+    }
+}
+
+#[test]
+fn help_flags_print_usage_to_stdout_and_exit_zero() {
+    for args in [
+        vec!["-h"],
+        vec!["--help"],
+        vec!["serve", "-h"],
+        vec!["serve", "--help"],
+        vec!["token", "-help"],
+        vec!["token", "add", "-h"],
+        vec!["project", "list", "--help"],
+        vec!["sample", "-h"],
+        vec!["backup", "-h"],
+        vec!["renormalize", "-h"],
+        vec!["version", "--help"],
+    ] {
+        let output = run(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{args:?}\nstdout:\n{}\nstderr:\n{}",
+            stdout(&output),
+            stderr(&output)
+        );
+        assert!(
+            stdout(&output).contains("usage: otterscope"),
+            "{args:?}\n{}",
+            stdout(&output)
+        );
+        assert!(
+            stderr(&output).is_empty(),
+            "{args:?} wrote to stderr:\n{}",
             stderr(&output)
         );
     }
