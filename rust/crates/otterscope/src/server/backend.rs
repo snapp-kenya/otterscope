@@ -70,6 +70,67 @@ pub(crate) fn map_store_error(err: anyhow::Error) -> BackendError {
     }
 }
 
+impl std::fmt::Debug for CreatedTokenRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreatedTokenRecord")
+            .field("id", &self.id)
+            .field("token", &crate::redacted(&self.token))
+            .field("name", &self.name)
+            .field("scope", &self.scope)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ShareRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShareRecord")
+            .field("token", &crate::redacted(&self.token))
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for AlertRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AlertRecord")
+            .field("id", &self.id)
+            .field("project", &self.project)
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("threshold", &self.threshold)
+            .field("window_secs", &self.window_secs)
+            .field("config", &self.config)
+            .field(
+                "webhook_url",
+                &crate::alerts::redact_webhook_url(&self.webhook_url),
+            )
+            .field("enabled", &self.enabled)
+            .field("firing", &self.firing)
+            .field("settle_secs", &self.settle_secs)
+            .field("pending_since_ns", &self.pending_since_ns)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for NewAlert {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NewAlert")
+            .field("project", &self.project)
+            .field("name", &self.name)
+            .field("kind", &self.kind)
+            .field("threshold", &self.threshold)
+            .field("window_secs", &self.window_secs)
+            .field("config", &self.config)
+            .field(
+                "webhook_url",
+                &crate::alerts::redact_webhook_url(&self.webhook_url),
+            )
+            .field("settle_secs", &self.settle_secs)
+            .finish()
+    }
+}
+
 /// A token's identity — never its secret.
 #[derive(Debug, Clone)]
 pub struct TokenRecord {
@@ -81,7 +142,7 @@ pub struct TokenRecord {
 }
 
 /// The one response that carries a usable secret.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CreatedTokenRecord {
     pub id: String,
     pub token: String,
@@ -90,7 +151,7 @@ pub struct CreatedTokenRecord {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ShareRecord {
     pub token: String,
     pub created_at: DateTime<Utc>,
@@ -111,7 +172,7 @@ pub struct AuditRecord {
     pub detail: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AlertRecord {
     pub id: i64,
     pub project: String,
@@ -129,7 +190,7 @@ pub struct AlertRecord {
 
 /// A create-alert request, already past JSON decoding. Watcher-owned state is
 /// not part of it: a client can never set `firing` or `pendingSinceNs`.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct NewAlert {
     pub project: String,
     pub name: String,

@@ -277,7 +277,8 @@ pub async fn evaluate_project(
     report.runs_evaluated = stats.runs;
     report.judge_calls = stats.judge_calls;
     report.judge_calls_skipped = stats.judge_skipped;
-    let skipped = candidates - refs.len() as i64;
+    let refs_collected = i64::try_from(refs.len()).unwrap_or(i64::MAX);
+    let skipped = candidates.saturating_sub(refs_collected);
     if skipped > 0 {
         report.runs_skipped = skipped;
     }

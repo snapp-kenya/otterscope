@@ -1,5 +1,6 @@
 //! End-to-end checks over the real store: sample seeding, MCP tool queries and
 //! the alert watcher's persisted firing state.
+#![forbid(unsafe_code)]
 
 use std::sync::Arc;
 use std::time::Duration;

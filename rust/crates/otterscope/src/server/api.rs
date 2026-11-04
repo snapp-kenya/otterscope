@@ -225,7 +225,7 @@ struct TokenJson {
     last_used_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CreatedTokenJson {
     id: String,
@@ -235,7 +235,7 @@ struct CreatedTokenJson {
     created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ShareJson {
     token: String,
@@ -259,7 +259,7 @@ struct AuditJson {
     detail: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AlertJson {
     id: i64,
@@ -297,13 +297,13 @@ struct SharedBody {
     steps: Vec<StepJson>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct ShareMintBody {
     token: String,
     url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct SharesBody {
     shares: Vec<ShareJson>,
 }
@@ -323,7 +323,7 @@ struct TokensBody {
     tokens: Vec<TokenJson>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 struct AlertsBody {
     alerts: Vec<AlertJson>,
 }
@@ -367,7 +367,7 @@ struct AssertionInput {
     config: String,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct AlertInput {
     #[serde(default)]
@@ -1052,17 +1052,14 @@ async fn runs_csv(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> 
         Ok(filter) => filter,
         Err(err) => return json_error(StatusCode::BAD_REQUEST, &err),
     };
-    let cap = state.options.csv_export_limit;
-    let runs = match state.backend.list_runs(&filter, cap.saturating_add(1), 0) {
+    let cap = usize::try_from(state.options.csv_export_limit).unwrap_or(0);
+    let fetch = i64::try_from(cap.saturating_add(1)).unwrap_or(i64::MAX);
+    let runs = match state.backend.list_runs(&filter, fetch, 0) {
         Ok(runs) => runs,
         Err(err) => return query_failed("export runs", err),
     };
-    let truncated = runs.len() as i64 > cap;
-    let runs = if truncated {
-        &runs[..cap as usize]
-    } else {
-        &runs[..]
-    };
+    let truncated = runs.len() > cap;
+    let runs = &runs[..runs.len().min(cap)];
 
     let mut csv = String::new();
     write_csv_row(

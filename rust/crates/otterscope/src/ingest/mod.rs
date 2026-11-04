@@ -62,19 +62,21 @@ pub struct Options {
 
 impl Options {
     pub(crate) fn max_spans(&self) -> usize {
-        if self.max_spans > 0 {
-            self.max_spans as usize
+        let cap = if self.max_spans > 0 {
+            self.max_spans
         } else {
-            DEFAULT_MAX_SPANS_PER_BATCH as usize
-        }
+            DEFAULT_MAX_SPANS_PER_BATCH
+        };
+        usize::try_from(cap).unwrap_or(usize::MAX)
     }
 
     pub(crate) fn max_trace_ids(&self) -> usize {
-        if self.max_trace_ids > 0 {
-            self.max_trace_ids as usize
+        let cap = if self.max_trace_ids > 0 {
+            self.max_trace_ids
         } else {
-            DEFAULT_MAX_TRACE_IDS_PER_BATCH as usize
-        }
+            DEFAULT_MAX_TRACE_IDS_PER_BATCH
+        };
+        usize::try_from(cap).unwrap_or(usize::MAX)
     }
 }
 

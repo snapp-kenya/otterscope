@@ -20,7 +20,7 @@ pub const DEFAULT_MAX_SPANS_PER_BATCH: i64 = 10_000;
 /// Default cap on distinct trace ids one OTLP request may touch.
 pub const DEFAULT_MAX_TRACE_IDS_PER_BATCH: i64 = 1_000;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Config {
     pub db: String,
     pub pricing: String,
@@ -43,6 +43,27 @@ pub struct Config {
     /// Key for the OpenAI-compatible judge endpoint
     /// (`OTTERSCOPE_JUDGE_KEY`, falling back to `OPENAI_API_KEY`).
     pub judge_key: String,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("db", &self.db)
+            .field("pricing", &self.pricing)
+            .field("judge_url", &self.judge_url)
+            .field("judge_models", &self.judge_models)
+            .field("retention", &self.retention)
+            .field("alert_interval", &self.alert_interval)
+            .field("read_auth", &self.read_auth)
+            .field("ingest_rate", &self.ingest_rate)
+            .field("ingest_burst", &self.ingest_burst)
+            .field("max_spans_per_batch", &self.max_spans_per_batch)
+            .field("max_trace_ids_per_batch", &self.max_trace_ids_per_batch)
+            .field("base_path", &self.base_path)
+            .field("allowed_origins", &self.allowed_origins)
+            .field("judge_key", &crate::redacted(&self.judge_key))
+            .finish()
+    }
 }
 
 impl Default for Config {
@@ -377,7 +398,7 @@ pub fn parse_duration(s: &str) -> Result<Duration, String> {
         return Err(format!("time: missing unit in duration {s:?}"));
     }
     let secs = if neg { -total } else { total };
-    Ok(Duration::from_secs_f64(secs))
+    Duration::try_from_secs_f64(secs).map_err(|_| format!("time: invalid duration {s:?}"))
 }
 
 #[cfg(test)]
@@ -395,6 +416,15 @@ mod tests {
         assert_eq!(parse_duration("1.5h").unwrap(), Duration::from_secs(5400));
         assert!(parse_duration("10").is_err());
         assert!(parse_duration("10x").is_err());
+    }
+
+    #[test]
+    fn out_of_range_durations_are_errors_not_panics() {
+        // The Go parser accepts a sign; a std `Duration` cannot represent a
+        // negative value, so it is rejected instead of panicking.
+        assert!(parse_duration("-1h").is_err());
+        let huge = format!("{}h", "9".repeat(400));
+        assert!(parse_duration(&huge).is_err());
     }
 
     #[test]

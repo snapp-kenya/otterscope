@@ -4,6 +4,13 @@
 //! `server`, `config` and `basepath`, plus `pricing`, `evals`, `alerts`, `mcp`
 //! and `sample`. It was ported from the original Go implementation, which is no
 //! longer in the tree.
+#![forbid(unsafe_code)]
+
+/// Rendering for a secret-valued field in a `Debug` implementation: whether the
+/// value is set is useful, its contents and length are not.
+pub(crate) fn redacted(value: &str) -> &'static str {
+    if value.is_empty() { "" } else { "<redacted>" }
+}
 
 pub mod alerts;
 pub mod args;

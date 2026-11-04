@@ -94,11 +94,15 @@ impl Table {
         };
         // Some emitters report input_tokens already net of cache tokens. A
         // negative remainder means the cache tokens are additive, not a
-        // subset; clamping to zero instead would undercount the call.
-        let mut plain = input - cache_read - cache_write;
-        if plain < 0 {
-            plain = input;
-        }
+        // subset; clamping to zero instead would undercount the call. Token
+        // counts arrive from OTLP attributes, so the subtractions are checked:
+        // an out-of-range value falls back to the additive reading rather than
+        // wrapping.
+        let plain = input
+            .checked_sub(cache_read)
+            .and_then(|plain| plain.checked_sub(cache_write))
+            .filter(|plain| *plain >= 0)
+            .unwrap_or(input);
         let usd = (plain as f64 * rate.input
             + cache_read as f64 * cache_read_rate
             + cache_write as f64 * cache_write_rate

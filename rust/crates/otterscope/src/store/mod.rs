@@ -124,7 +124,7 @@ pub struct Metrics {
     pub db_size_bytes: i64,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Project {
     pub name: String,
     pub ingest_key: String,
@@ -140,7 +140,7 @@ pub struct Token {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct CreatedToken {
     pub id: String,
     pub token: String,
@@ -164,10 +164,41 @@ pub struct AuditEntry {
     pub detail: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Share {
     pub token: String,
     pub created_at: DateTime<Utc>,
+}
+
+impl std::fmt::Debug for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Project")
+            .field("name", &self.name)
+            .field("ingest_key", &crate::redacted(&self.ingest_key))
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for CreatedToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreatedToken")
+            .field("id", &self.id)
+            .field("token", &crate::redacted(&self.token))
+            .field("name", &self.name)
+            .field("scope", &self.scope)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Share {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Share")
+            .field("token", &crate::redacted(&self.token))
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 /// Handle to the single SQLite connection. All access is serialised through the

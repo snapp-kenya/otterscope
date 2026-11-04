@@ -1,5 +1,6 @@
 //! End-to-end tests for the database subcommands: they run the built binary
 //! against throwaway SQLite files and inspect the store the command produced.
+#![forbid(unsafe_code)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
