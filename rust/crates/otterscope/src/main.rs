@@ -30,9 +30,9 @@ fn main() -> ExitCode {
             Ok(())
         }
         "sample" => sample(rest),
-        "renormalize" | "backup" | "token" | "project" => Err(anyhow::anyhow!(
-            "{command} is not ported yet"
-        )),
+        "renormalize" | "backup" | "token" | "project" => {
+            Err(anyhow::anyhow!("{command} is not ported yet"))
+        }
         other => {
             eprintln!("unknown command {other:?}");
             usage();
@@ -124,7 +124,9 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
     if let Some(v) = parsed.get("alert-interval") {
         cfg.alert_interval = config::parse_duration(v).map_err(anyhow::Error::msg)?;
     }
-    cfg.read_auth = parsed.bool("read-auth", cfg.read_auth).map_err(anyhow::Error::msg)?;
+    cfg.read_auth = parsed
+        .bool("read-auth", cfg.read_auth)
+        .map_err(anyhow::Error::msg)?;
     if let Some(v) = parsed.get("ingest-rate") {
         cfg.ingest_rate = v.parse()?;
     }
@@ -141,20 +143,97 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg)?;
 
     tracing::info!(db = %cfg.db, listen = %cfg.listen, otlp = %cfg.otlp, "starting");
-    let store = store::Store::open(&cfg.db)?;
+    let store = std::sync::Arc::new(store::Store::open(&cfg.db)?);
+
+    let mut prices = otterscope::pricing::Table::default();
+    if !cfg.pricing.is_empty() {
+        let data = std::fs::read(&cfg.pricing)
+            .map_err(|err| anyhow::anyhow!("read pricing overrides {}: {err}", cfg.pricing))?;
+        prices.merge_json(&data)?;
+        tracing::info!(file = %cfg.pricing, "pricing overrides loaded");
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async move {
-        let app = server::router(server::AppState { store });
-        let listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
-        tracing::info!("ui on http://{}", listener.local_addr()?);
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
-            .await?;
+        let options = server::Options::from_config(&cfg);
+        let judge = otterscope::evals::Endpoint {
+            base_url: options.judge_url.clone(),
+            key: options.judge_key.clone(),
+            models: options.judge_models.clone(),
+        };
+        let hub = server::Hub::new();
+        let evaluator = server::Evaluator::start(store.clone(), judge);
+        let sink = std::sync::Arc::new(server::StoreSink::new(
+            store.clone(),
+            prices,
+            evaluator.clone(),
+            hub.clone(),
+        ));
+        let app = server::router_with(
+            server::AppState {
+                store: store.clone(),
+            },
+            options,
+            hub,
+        );
+
+        let resolve_store = store.clone();
+        let keyless_allowed = !cfg.read_auth;
+        let resolve: otterscope::ingest::KeyResolver = std::sync::Arc::new(move |key: &str| {
+            if key.is_empty() {
+                keyless_allowed.then(|| "default".to_string())
+            } else {
+                resolve_store.project_for_key(key)
+            }
+        });
+        let otlp_options = otterscope::ingest::Options {
+            base_path: cfg.base_path.clone(),
+            rate_per_sec: cfg.ingest_rate,
+            burst: cfg.ingest_burst,
+            require_key: cfg.read_auth,
+            max_spans: cfg.max_spans_per_batch,
+            max_trace_ids: cfg.max_trace_ids_per_batch,
+        };
+        let otlp_app = otterscope::ingest::router(otlp_options, sink, resolve);
+
+        let ui_listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
+        let otlp_listener = tokio::net::TcpListener::bind(&cfg.otlp).await?;
+        tracing::info!(
+            ui = %ui_listener.local_addr()?,
+            otlp = %otlp_listener.local_addr()?,
+            "listening"
+        );
+
+        let mut watcher = if cfg.alert_interval > std::time::Duration::ZERO {
+            let mut watcher = otterscope::alerts::Watcher::new(store.clone(), cfg.alert_interval)?;
+            watcher.start();
+            Some(watcher)
+        } else {
+            None
+        };
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            let _ = shutdown_tx.send(true);
+        });
+        let mut ui_shutdown = shutdown_rx.clone();
+        let mut otlp_shutdown = shutdown_rx;
+        tokio::try_join!(
+            axum::serve(ui_listener, app).with_graceful_shutdown(async move {
+                let _ = ui_shutdown.changed().await;
+            }),
+            axum::serve(otlp_listener, otlp_app).with_graceful_shutdown(async move {
+                let _ = otlp_shutdown.changed().await;
+            }),
+        )?;
+
+        evaluator.stop().await;
+        if let Some(watcher) = watcher.as_mut() {
+            watcher.stop().await;
+        }
         Ok::<(), anyhow::Error>(())
     })?;
     Ok(())

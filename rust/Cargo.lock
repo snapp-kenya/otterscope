@@ -845,6 +845,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "flate2",
+ "futures-util",
  "http-body-util",
  "mime_guess",
  "prost",
