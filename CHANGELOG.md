@@ -6,6 +6,18 @@ commit history has the rest.
 
 ## Unreleased
 
+### Breaking
+
+- The HTTP JSON API is redesigned for the Rust server: `camelCase` fields,
+  typed enums for run status, step kind and token scope, one
+  `{"error": "…"}` envelope for every failure, and response arrays that are
+  always present. Clients built against the Go JSON shapes need updating;
+  [docs/api-rust.md](docs/api-rust.md) is the contract.
+- MCP now speaks protocol revision `2026-07-28` only, the stateless revision.
+  The `initialize` handshake and `Mcp-Session-Id` are gone; clients pinned to
+  an older revision are rejected with `UnsupportedProtocolVersionError`. See
+  [docs/mcp.md](docs/mcp.md).
+
 ### Added
 
 - A configurable base path (`-base-path`, `OTTERSCOPE_BASE_PATH`, or
@@ -28,6 +40,20 @@ commit history has the rest.
 
 ### Changed
 
+- The backend is ported from Go to Rust (axum, rusqlite with bundled SQLite,
+  prost, rust-embed). The binary stays single and self-contained with the UI
+  embedded. CLI flags, `OTTERSCOPE_*` variables and the flags > env > file >
+  defaults precedence keep their old spellings. The SQLite schema and
+  append-only migrations are preserved, so an existing database opens without
+  a conversion step, but the two builds no longer promise byte-compatible
+  database files; back up before switching.
+- Builds now come from the Rust workspace after the frontend is built:
+  `cd web && bun install && bun run build`, then `cd rust && cargo build
+  --release`. The Go module is no longer the build target and the `go install`
+  channel is retired.
+- The web UI is rebuilt on Bun + React 19 + TanStack Router/Query + Tailwind +
+  shadcn-style components. `bun test` replaces vitest, `bun run lint` keeps
+  oxlint, and `bun run build` produces the `web/dist` the server embeds.
 - Ingest rate limiting defaults to a finite 50 batches/sec per ingest key
   with a burst of 100, instead of unlimited. An exposed receiver was a free
   amplifier; `-ingest-rate 0` still turns the limit off explicitly.
@@ -38,7 +64,7 @@ commit history has the rest.
   only at creation and stored only as a digest, so a database or a backup
   no longer hands out working credentials; rows written by an older release
   are hashed in place the first time the store opens.
-- The container image runs as uid 65532 on a scratch base with `/data` as
+- The container image runs as uid 65532 on a distroless base with `/data` as
   the only writable path, and keeps the binary's loopback defaults.
   `docker-compose.yml` publishes both ports on `127.0.0.1` and enables read
   authentication.

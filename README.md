@@ -2,7 +2,7 @@
 
 **Lightweight, self-hosted observability and evals for AI agents.**
 
-One static binary. One SQLite file. No ClickHouse, no Redis, no S3, no seat fees, no trace metering. Point your agent's OpenTelemetry exporter at Otterscope and get an agent-run-first view of everything it did — LLM calls, tool calls, loops, errors, latency, and cost — plus assertions and LLM-as-judge evals scored onto your real production runs. All on your own disk, with unlimited retention.
+One self-contained binary. One SQLite file. No ClickHouse, no Redis, no S3, no seat fees, no trace metering. Point your agent's OpenTelemetry exporter at Otterscope and get an agent-run-first view of everything it did — LLM calls, tool calls, loops, errors, latency, and cost — plus assertions and LLM-as-judge evals scored onto your real production runs. All on your own disk, with unlimited retention.
 
 > Think *Plausible Analytics, but for AI agents*.
 
@@ -29,25 +29,25 @@ than hostname — pass `-base-path /otterscope` (`OTTERSCOPE_BASE_PATH`, or
 `"basePath"` in the config file; one setting whichever source you use). Point
 exporters at `http://host:4318/otterscope`; OTLP/HTTP appends
 `/v1/traces` itself, so ingest lands at `/otterscope/v1/traces`. Build the UI
-with the same value (`OTTERSCOPE_BASE_PATH=/otterscope npm --prefix web run
+with the same value (`cd web && OTTERSCOPE_BASE_PATH=/otterscope bun run
 build`) so its asset and API URLs carry the prefix. The default is the root,
 and a request outside the prefix is a 404 rather than the SPA, so a misrouted
 path cannot land on another application's index.
 
 Auth is off by default, which is the right posture on loopback. Before you
 expose the instance, pass `-read-auth`: the UI and API then need a Bearer
-token. Mint the first one with `otterscope token add local` — it is printed
-once and stored only as a SHA-256 digest; `-admin` mints a token that may
-also mutate. Read tokens cover the query surface; minting or revoking tokens,
-writing assertions, saved views or alerts, and on-demand evaluation need an
-admin token. `otterscope token list` shows ids, scopes and last use, never a
+token. Mint the first one with `otterscope token add local` — it is shown only
+at creation and stored only as a SHA-256 digest; `-admin` mints a token that
+may also mutate. Read tokens cover the query surface; minting or revoking tokens
+and share links, writing assertions, saved views or alerts, and on-demand
+evaluation need an admin token. `otterscope token list` shows ids, scopes and last use, never a
 secret. With read auth on, OTLP ingest also requires a project ingest key
 (`otterscope project add my-agent`); the keyless default project is closed.
 If the UI is reached by a hostname through a reverse proxy, list that origin
 in `OTTERSCOPE_ALLOWED_ORIGINS` — the API checks `Origin` and `Host` on every
 request and refuses a name it was not told about.
 
-Docker works the same way. The image is a scratch build running as uid
+Docker works the same way. The image is a distroless build running as uid
 65532, with `/data` as its only writable path; it keeps the binary's loopback
 defaults, so pass `-listen`/`-otlp` to let Docker's port forwarding reach it,
 and publish only to your loopback:
@@ -82,7 +82,7 @@ service's step.
 
 Want to poke around before wiring an agent? `./otterscope sample` seeds realistic demo runs.
 
-Want your agent to inspect *itself*? Otterscope ships an [MCP server](docs/mcp.md), so Claude Code and other MCP clients can query your runs, cost, and stats:
+Want your agent to inspect *itself*? Otterscope ships a stateless [MCP server](docs/mcp.md) (protocol revision `2026-07-28`), so Claude Code and other MCP clients can query your runs, cost, and stats:
 
 ```sh
 claude mcp add otterscope --transport http http://localhost:8317/mcp
@@ -103,7 +103,7 @@ claude mcp add otterscope --transport http http://localhost:8317/mcp
 
   ![Compare — two models side by side: error rate, latency percentiles, cost, assertion pass rates](docs/screenshots/compare.png)
 - **Drop-in OTel compatibility** — normalizes the OTel GenAI conventions (both current dialects), OpenInference (OpenAI Agents SDK, CrewAI, LangChain), and the Vercel AI SDK. Raw payloads are retained, so old data benefits from future normalizer improvements.
-- **Ask your agent about itself** — a built-in [MCP server](docs/mcp.md) (`POST /mcp`) lets Claude Code and other MCP clients query your runs, steps, cost, and stats; it needs the same read token when `-read-auth` is on. `claude mcp add otterscope --transport http http://localhost:8317/mcp`.
+- **Ask your agent about itself** — a built-in [MCP server](docs/mcp.md) (`POST /mcp`, stateless revision `2026-07-28`) lets Claude Code and other MCP clients query your runs, steps, cost, and stats; it needs the same read token when `-read-auth` is on. `claude mcp add otterscope --transport http http://localhost:8317/mcp`.
 - **Projects + ingest keys** for isolating multiple agents; **API tokens** scoped read or admin (`otterscope token add`, `-admin` for one that may mutate) to script against your data or build external dashboards — enforce them with `serve -read-auth` when you expose the instance, which also makes an ingest key mandatory. Optional retention sweep (`-retention 720h`) if you *want* to delete data; it removes the full-text index rows with the runs and vacuums, so deleted content stops being searchable.
 - **Backups you can trust** — `otterscope backup -o snapshot.db` for a consistent copy (0600, like the database), and Otterscope auto-snapshots before applying any schema migration, keeping the newest one, so an upgrade can never leave you stranded. The database, its `-wal`/`-shm` siblings and a directory Otterscope creates for them are owner-only too.
 - **Prometheus metrics** at `/metrics` (runs, statuses, steps, DB size including WAL and SHM, firing alerts) — the observability tool is itself observable. With `-read-auth` it takes the same read token as the API.
@@ -128,16 +128,51 @@ Otterscope is Apache-2.0, installs in one command, and is built for individuals 
 
 ## Install
 
-- **Binaries** — [Releases](https://github.com/otterscope/otterscope/releases) (Linux amd64/arm64, macOS, Windows) + `.deb`/`.rpm`
-- **Homebrew** — `brew install otterscope/tap/otterscope`
+- **Binaries** — [Releases](https://github.com/otterscope/otterscope/releases) (Linux amd64/arm64, macOS arm64, Windows amd64). The Linux builds link
+  glibc 2.39+, so Docker is the portable option.
 - **Docker** — `ghcr.io/otterscope/otterscope`
-- **Go** — `go install github.com/otterscope/otterscope/cmd/otterscope@latest`
+- **From source** — Bun + Rust; see [Development](#development)
 
 ## Development
 
-Go backend, embedded React UI. `go build ./...` works without building the frontend; `cd web && npm run build` embeds the real UI. See [CLAUDE.md](CLAUDE.md) for architecture and [docs/WORKFLOW.md](docs/WORKFLOW.md) for the contribution process.
+Rust backend, embedded Bun/React UI. The frontend must be built before the
+binary if you want the real UI:
 
-Contributions are welcome and there's nothing to sign — no CLA, no copyright assignment. Issues tagged [good first issue](https://github.com/otterscope/otterscope/labels/good%20first%20issue) are scoped small on purpose: each one names the file and line, what's wrong, and what "done" looks like.
+```sh
+cd web && bun install && bun run build
+cd ../rust && cargo build --release
+./target/release/otterscope serve
+```
+
+`cargo build` also works without a frontend build: `build.rs` writes a
+placeholder `web/dist/index.html`, so the API, OTLP receiver and `/mcp` still
+run while the UI page says it was built without one. The binary lands at
+`rust/target/release/otterscope` — run it as `./target/release/otterscope`
+from `rust/`, or as `rust/target/release/otterscope` from the repository root.
+
+The binary is still single and static-feeling: SQLite is compiled in
+(`rusqlite` with the `bundled` feature) and the UI is embedded with
+`rust-embed`, so there is no database server, asset directory or sidecar to
+deploy. It links the platform C runtime, so "static" means one file to deploy,
+not a promise of a fully static musl build.
+
+Databases are still plain SQLite and keep the same schema and append-only
+migrations, so an existing database opens without a conversion step. The two
+implementations no longer promise byte-compatible database files: back up
+before switching, and do not point the Go and Rust binaries at the same file.
+
+Tests: `cd rust && cargo test` and `cd web && bun test`. Quality gates:
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D
+warnings` and `cargo test` in `rust/`; `bun run lint`, `bun test` and `bun run
+build` in `web/`. The HTTP contract is [docs/api-rust.md](docs/api-rust.md) and
+MCP is [docs/mcp.md](docs/mcp.md). See [CLAUDE.md](CLAUDE.md) for the
+architecture map and [docs/WORKFLOW.md](docs/WORKFLOW.md) for the contribution
+process.
+
+Contributions are welcome and there's nothing to sign — no CLA, no copyright
+assignment. GitHub Issues are disabled on this repository; the port is tracked
+by the draft PR that rewrites the backend in Rust, so start there or open a PR
+with a focused change.
 
 ## License
 

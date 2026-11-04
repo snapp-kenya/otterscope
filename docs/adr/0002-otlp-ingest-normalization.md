@@ -2,6 +2,8 @@
 
 Date: 2026-07-14 · Status: accepted
 
+> Port note: the paths below are Go-era. The layer now lives in `rust/crates/otterscope/src/ingest`, the domain in `rust/crates/otterscope/src/model`, and the fixtures in `rust/crates/otterscope/testdata` (ADR-0006). The decision itself is unchanged.
+
 ## Context
 As of mid-2026 the OTel GenAI semantic conventions are **not stable**: the old `gen_ai.*` attribute format and the `gen_ai_latest_experimental` format coexist in the wild, and OpenInference (Arize) is the de-facto dialect for several agent frameworks (OpenAI Agents SDK, CrewAI). Frameworks emit natively (Pydantic AI, Vercel AI SDK, LangGraph) or via instrumentors (OpenLLMetry, OpenInference).
 

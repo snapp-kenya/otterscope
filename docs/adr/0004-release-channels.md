@@ -1,6 +1,6 @@
 # ADR-0004: Release channels and packaging
 
-Date: 2026-07-14 · Status: accepted
+Date: 2026-07-14 · Status: superseded in part by ADR-0006
 
 ## Context
 Distribution is the product's whole thesis (ADR-0001): install must be one command everywhere our users live. The self-hosted community expects an official Docker image and a docker-compose example; developers expect binaries, Homebrew, and `go install`. Because the binary is static and CGO-free, every channel below is buildable from one GitHub Actions release pipeline with no signing infrastructure required at this stage.

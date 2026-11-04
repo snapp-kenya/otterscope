@@ -31,9 +31,9 @@ out of each model call. There's a cost table, assertions and LLM-as-judge
 evals scored onto your real runs, a compare view for "this week vs last," and
 webhook alerts when your error rate or spend crosses a line.
 
-The important part for hosting: it's **one static Go binary and one SQLite
-file.** No database to provision, no cache, no object store. That's the whole
-reason it fits on the smallest Droplet.
+The important part for hosting: it's **one self-contained Rust binary and one
+SQLite file.** No database to provision, no cache, no object store. That's the
+whole reason it fits on the smallest Droplet.
 
 ## The Droplet
 
@@ -58,16 +58,16 @@ docker run -d --restart unless-stopped --read-only \
   -read-auth
 ```
 
-The image is non-root (uid 65532, scratch base) and listens on loopback by
+The image is non-root (uid 65532, distroless base) and listens on loopback by
 default, so on a public host you pass `-listen`/`-otlp` yourself (as above).
 `-read-auth` makes the UI and API ask for a token; mint the first token and a
 per-agent ingest key against the same volume:
 
 ```sh
-docker run --rm -v otterscope:/data --entrypoint /otterscope \
-  ghcr.io/otterscope/otterscope token add local -db /data/otterscope.db
-docker run --rm -v otterscope:/data --entrypoint /otterscope \
-  ghcr.io/otterscope/otterscope project add my-agent
+docker run --rm -v otterscope:/data ghcr.io/otterscope/otterscope \
+  token add local -db /data/otterscope.db
+docker run --rm -v otterscope:/data ghcr.io/otterscope/otterscope \
+  project add my-agent -db /data/otterscope.db
 ```
 
 The token is shown only now (the database keeps its digest); the project key
@@ -79,7 +79,7 @@ to. The `otterscope` volume keeps your data across restarts.
 
 ### Option B — the binary + systemd (leanest)
 
-No Docker, ~15 MB resident:
+No Docker:
 
 ```sh
 # grab the linux binary from the releases page, then:
@@ -170,5 +170,5 @@ Repo and docs are here: **https://github.com/otterscope/otterscope**
 and the Docker image is `ghcr.io/otterscope/otterscope`.
 
 If you self-host it on a Droplet and hit a rough edge — especially a framework
-whose traces don't map cleanly yet — open an issue. Raw payloads are retained,
-so fixes apply retroactively to data you've already collected.
+whose traces don't map cleanly yet — open a PR with the payload. Raw payloads
+are retained, so fixes apply retroactively to data you've already collected.

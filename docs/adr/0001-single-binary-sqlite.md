@@ -1,6 +1,6 @@
 # ADR-0001: Single static Go binary with embedded SQLite
 
-Date: 2026-07-14 · Status: accepted
+Date: 2026-07-14 · Status: superseded in part by ADR-0006
 
 ## Context
 The competitive research (July 2026) shows the market gap for AI-agent observability is specifically *operational weight*: Langfuse v3 requires Postgres + ClickHouse + Redis + S3; Opik, SigNoz, OpenLIT are ClickHouse-backed; LangSmith/Braintrust gate self-hosting behind enterprise contracts. The users we target run a few thousand to a few hundred thousand LLM calls per day — SQLite-scale, not ClickHouse-scale.
