@@ -10,4 +10,6 @@ mod tools;
 mod views;
 
 pub use server::{Handler, HttpReply, PROTOCOL_VERSION, SERVER_NAME, SUPPORTED_VERSIONS};
+#[cfg(not(test))]
+pub(crate) use tools::BlockingStore;
 pub use tools::{McpStore, ToolDef, run_tool, tool_defs};

@@ -19,8 +19,8 @@ use super::backend::{
     EvaluateOptions, NewAlert, ShareRecord, StatsRecord, TokenRecord, ViewRecord,
 };
 use super::{
-    ServerState, admin_only, decode_json, insert_header, json_error, json_response, no_content,
-    plain_text, query_int, query_map,
+    ServerState, admin_only, backend_audit, backend_call, backend_option, decode_json,
+    insert_header, json_error, json_response, no_content, plain_text, query_int, query_map,
 };
 use crate::evals::Assertion;
 use crate::model::{Run, Status, Step, StepKind};
@@ -613,7 +613,7 @@ async fn healthz(State(state): State<ServerState>) -> Response {
 }
 
 async fn metrics_endpoint(State(state): State<ServerState>) -> Response {
-    match state.backend.metrics() {
+    match backend_call(state.backend.clone(), |backend| backend.metrics()).await {
         Ok(metrics) => {
             let body = super::metrics::render(&state.options.version, &metrics);
             plain_text(
@@ -641,7 +641,11 @@ async fn list_runs(State(state): State<ServerState>, RawQuery(raw): RawQuery) ->
         Ok(filter) => filter,
         Err(err) => return json_error(StatusCode::BAD_REQUEST, &err),
     };
-    match state.backend.list_runs(&filter, limit, offset) {
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.list_runs(&filter, limit, offset)
+    })
+    .await
+    {
         Ok(runs) => json_response(
             StatusCode::OK,
             &RunsBody {
@@ -658,19 +662,32 @@ async fn stats(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> Res
         Ok(filter) => filter,
         Err(err) => return json_error(StatusCode::BAD_REQUEST, &err),
     };
-    match state.backend.get_stats(&filter) {
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.get_stats(&filter)
+    })
+    .await
+    {
         Ok(stats) => json_response(StatusCode::OK, &stats_json(&stats)),
         Err(err) => query_failed("get stats", err),
     }
 }
 
 async fn get_run(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
-    let (run, steps) = match state.backend.get_run(&id) {
-        Ok(pair) => pair,
-        Err(BackendError::NotFound) => return json_error(StatusCode::NOT_FOUND, "run not found"),
-        Err(err) => return query_failed("get run", err),
-    };
-    let results = match state.backend.results_for_run(&run.project, &run.id) {
+    let (run, steps) =
+        match backend_call(state.backend.clone(), move |backend| backend.get_run(&id)).await {
+            Ok(pair) => pair,
+            Err(BackendError::NotFound) => {
+                return json_error(StatusCode::NOT_FOUND, "run not found");
+            }
+            Err(err) => return query_failed("get run", err),
+        };
+    let project = run.project.clone();
+    let run_id = run.id.clone();
+    let results = match backend_call(state.backend.clone(), move |backend| {
+        backend.results_for_run(&project, &run_id)
+    })
+    .await
+    {
         Ok(results) => results,
         Err(err) => return query_failed("results for run", err),
     };
@@ -685,12 +702,21 @@ async fn get_run(State(state): State<ServerState>, Path(id): Path<String>) -> Re
 }
 
 async fn create_share(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
-    let (run, _) = match state.backend.get_run(&id) {
-        Ok(pair) => pair,
-        Err(BackendError::NotFound) => return json_error(StatusCode::NOT_FOUND, "run not found"),
-        Err(err) => return query_failed("get run", err),
-    };
-    let token = match state.backend.create_share(&run.project, &run.id) {
+    let (run, _) =
+        match backend_call(state.backend.clone(), move |backend| backend.get_run(&id)).await {
+            Ok(pair) => pair,
+            Err(BackendError::NotFound) => {
+                return json_error(StatusCode::NOT_FOUND, "run not found");
+            }
+            Err(err) => return query_failed("get run", err),
+        };
+    let project = run.project;
+    let run_id = run.id;
+    let token = match backend_call(state.backend.clone(), move |backend| {
+        backend.create_share(&project, &run_id)
+    })
+    .await
+    {
         Ok(token) => token,
         Err(err) => {
             tracing::error!(error = %err, "create share");
@@ -707,12 +733,21 @@ async fn create_share(State(state): State<ServerState>, Path(id): Path<String>) 
 }
 
 async fn list_shares(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
-    let (run, _) = match state.backend.get_run(&id) {
-        Ok(pair) => pair,
-        Err(BackendError::NotFound) => return json_error(StatusCode::NOT_FOUND, "run not found"),
-        Err(err) => return query_failed("get run", err),
-    };
-    match state.backend.shares_for_run(&run.project, &run.id) {
+    let (run, _) =
+        match backend_call(state.backend.clone(), move |backend| backend.get_run(&id)).await {
+            Ok(pair) => pair,
+            Err(BackendError::NotFound) => {
+                return json_error(StatusCode::NOT_FOUND, "run not found");
+            }
+            Err(err) => return query_failed("get run", err),
+        };
+    let project = run.project;
+    let run_id = run.id;
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.shares_for_run(&project, &run_id)
+    })
+    .await
+    {
         Ok(shares) => json_response(
             StatusCode::OK,
             &SharesBody {
@@ -724,14 +759,26 @@ async fn list_shares(State(state): State<ServerState>, Path(id): Path<String>) -
 }
 
 async fn delete_share(State(state): State<ServerState>, Path(token): Path<String>) -> Response {
-    delete_result("revoke", state.backend.delete_share(&token))
+    let result = backend_call(state.backend.clone(), move |backend| {
+        backend.delete_share(&token)
+    })
+    .await;
+    delete_result("revoke", result)
 }
 
 async fn shared_run(State(state): State<ServerState>, Path(token): Path<String>) -> Response {
-    let Some((project, run_id)) = state.backend.resolve_share(&token) else {
+    let resolved = backend_option(state.backend.clone(), move |backend| {
+        backend.resolve_share(&token)
+    })
+    .await;
+    let Some((project, run_id)) = resolved else {
         return json_error(StatusCode::NOT_FOUND, "not found");
     };
-    match state.backend.get_run_in_project(&project, &run_id) {
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.get_run_in_project(&project, &run_id)
+    })
+    .await
+    {
         Ok((run, steps)) => json_response(
             StatusCode::OK,
             &SharedBody {
@@ -746,7 +793,10 @@ async fn shared_run(State(state): State<ServerState>, Path(token): Path<String>)
 async fn audit(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> Response {
     let query = query_map(raw.as_deref());
     let limit = query_int(&query, "limit", 200, 1, 1000);
-    let entries = state.backend.list_audit(limit);
+    let entries = backend_audit(state.backend.clone(), move |backend| {
+        backend.list_audit(limit)
+    })
+    .await;
     json_response(
         StatusCode::OK,
         &AuditBody {
@@ -756,7 +806,7 @@ async fn audit(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> Res
 }
 
 async fn list_tokens(State(state): State<ServerState>) -> Response {
-    match state.backend.list_tokens() {
+    match backend_call(state.backend.clone(), |backend| backend.list_tokens()).await {
         Ok(tokens) => json_response(
             StatusCode::OK,
             &TokensBody {
@@ -785,7 +835,12 @@ async fn create_token(State(state): State<ServerState>, body: Bytes) -> Response
             );
         }
     };
-    match state.backend.create_token(&input.name, scope) {
+    let name = input.name;
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.create_token(&name, scope)
+    })
+    .await
+    {
         Ok(token) => json_response(StatusCode::CREATED, &created_token_json(&token)),
         Err(err) => {
             tracing::error!(error = %err, "create token");
@@ -795,11 +850,15 @@ async fn create_token(State(state): State<ServerState>, body: Bytes) -> Response
 }
 
 async fn delete_token(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
-    delete_result("revoke", state.backend.delete_token(&id))
+    let result = backend_call(state.backend.clone(), move |backend| {
+        backend.delete_token(&id)
+    })
+    .await;
+    delete_result("revoke", result)
 }
 
 async fn list_views(State(state): State<ServerState>) -> Response {
-    match state.backend.list_views() {
+    match backend_call(state.backend.clone(), |backend| backend.list_views()).await {
         Ok(views) => json_response(
             StatusCode::OK,
             &ViewsBody {
@@ -821,7 +880,12 @@ async fn create_view(State(state): State<ServerState>, body: Bytes) -> Response 
     let params = input
         .params
         .unwrap_or_else(|| Value::Object(Default::default()));
-    match state.backend.create_view(&input.name, &params) {
+    let name = input.name.clone();
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.create_view(&name, &params)
+    })
+    .await
+    {
         Ok(view) => json_response(StatusCode::CREATED, &view_json(&view)),
         Err(err) => store_error(
             "create view",
@@ -833,7 +897,13 @@ async fn create_view(State(state): State<ServerState>, body: Bytes) -> Response 
 
 async fn delete_view(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
     match id.parse::<i64>() {
-        Ok(id) => delete_result("delete", state.backend.delete_view(id)),
+        Ok(id) => {
+            let result = backend_call(state.backend.clone(), move |backend| {
+                backend.delete_view(id)
+            })
+            .await;
+            delete_result("delete", result)
+        }
         Err(_) => json_error(StatusCode::BAD_REQUEST, "bad id"),
     }
 }
@@ -841,7 +911,11 @@ async fn delete_view(State(state): State<ServerState>, Path(id): Path<String>) -
 async fn list_assertions(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> Response {
     let query = query_map(raw.as_deref());
     let project = query.get("project").cloned().unwrap_or_default();
-    match state.backend.list_assertions(&project) {
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.list_assertions(&project)
+    })
+    .await
+    {
         Ok(assertions) => json_response(
             StatusCode::OK,
             &AssertionsBody {
@@ -877,7 +951,12 @@ async fn create_assertion(State(state): State<ServerState>, body: Bytes) -> Resp
     {
         return json_error(StatusCode::BAD_REQUEST, &err);
     }
-    match state.backend.create_assertion(assertion.clone()) {
+    let to_create = assertion.clone();
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.create_assertion(to_create)
+    })
+    .await
+    {
         Ok(created) => json_response(StatusCode::CREATED, &assertion_json(&created)),
         Err(err) => store_error(
             "create assertion",
@@ -892,7 +971,13 @@ async fn create_assertion(State(state): State<ServerState>, body: Bytes) -> Resp
 
 async fn delete_assertion(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
     match id.parse::<i64>() {
-        Ok(id) => delete_result("delete", state.backend.delete_assertion(id)),
+        Ok(id) => {
+            let result = backend_call(state.backend.clone(), move |backend| {
+                backend.delete_assertion(id)
+            })
+            .await;
+            delete_result("delete", result)
+        }
         Err(_) => json_error(StatusCode::BAD_REQUEST, "bad id"),
     }
 }
@@ -932,7 +1017,12 @@ async fn evaluate(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> 
         return json_error(StatusCode::BAD_REQUEST, &err.to_string());
     }
 
-    let assertions = match state.backend.list_assertions(&project) {
+    let assertion_project = project.clone();
+    let assertions = match backend_call(state.backend.clone(), move |backend| {
+        backend.list_assertions(&assertion_project)
+    })
+    .await
+    {
         Ok(assertions) => assertions,
         Err(err) => {
             tracing::error!(project, error = %err, "api: list assertions for evaluate");
@@ -977,7 +1067,11 @@ fn check_judge_models(backend: &dyn ApiBackend, assertions: &[Assertion]) -> Res
 async fn list_alerts(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> Response {
     let query = query_map(raw.as_deref());
     let project = query.get("project").cloned().unwrap_or_default();
-    match state.backend.list_alerts(&project) {
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.list_alerts(&project)
+    })
+    .await
+    {
         Ok(alerts) => json_response(
             StatusCode::OK,
             &AlertsBody {
@@ -1016,7 +1110,12 @@ async fn create_alert(State(state): State<ServerState>, body: Bytes) -> Response
     if let Err(err) = state.backend.validate_alert(&alert).await {
         return json_error(StatusCode::BAD_REQUEST, &err);
     }
-    match state.backend.create_alert(&alert) {
+    let to_create = alert.clone();
+    match backend_call(state.backend.clone(), move |backend| {
+        backend.create_alert(&to_create)
+    })
+    .await
+    {
         Ok(created) => {
             let mut redacted = created.clone();
             redacted.webhook_url = state.backend.redact_webhook_url(&created.webhook_url);
@@ -1035,7 +1134,13 @@ async fn create_alert(State(state): State<ServerState>, body: Bytes) -> Response
 
 async fn delete_alert(State(state): State<ServerState>, Path(id): Path<String>) -> Response {
     match id.parse::<i64>() {
-        Ok(id) => delete_result("delete", state.backend.delete_alert(id)),
+        Ok(id) => {
+            let result = backend_call(state.backend.clone(), move |backend| {
+                backend.delete_alert(id)
+            })
+            .await;
+            delete_result("delete", result)
+        }
         Err(_) => json_error(StatusCode::BAD_REQUEST, "bad id"),
     }
 }
@@ -1054,7 +1159,11 @@ async fn runs_csv(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> 
     };
     let cap = usize::try_from(state.options.csv_export_limit).unwrap_or(0);
     let fetch = i64::try_from(cap.saturating_add(1)).unwrap_or(i64::MAX);
-    let runs = match state.backend.list_runs(&filter, fetch, 0) {
+    let runs = match backend_call(state.backend.clone(), move |backend| {
+        backend.list_runs(&filter, fetch, 0)
+    })
+    .await
+    {
         Ok(runs) => runs,
         Err(err) => return query_failed("export runs", err),
     };

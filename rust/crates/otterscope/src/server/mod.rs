@@ -233,6 +233,60 @@ pub(crate) struct ServerState {
     hub: Hub,
 }
 
+/// Offload one synchronous backend call to the runtime's bounded blocking pool.
+///
+/// Handlers are `async`, but the backend is SQLite behind a `std::sync::Mutex`:
+/// a call can wait on that lock and on the disk, so it must not hold an async
+/// worker. `ingest` already moves its sink work to `spawn_blocking`; the HTTP
+/// handlers do the same. The closure acquires and releases the store's guard on
+/// the blocking thread, so a blocking guard is never held across an `.await`. A
+/// panicking or cancelled blocking task is reported as an ordinary backend
+/// failure, which keeps every handler's existing status mapping unchanged.
+pub(crate) async fn backend_call<T, F>(backend: Arc<dyn ApiBackend>, call: F) -> BackendResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&dyn ApiBackend) -> BackendResult<T> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(move || call(backend.as_ref())).await {
+        Ok(result) => result,
+        Err(err) => Err(BackendError::other(anyhow::anyhow!(
+            "backend worker failed: {err}"
+        ))),
+    }
+}
+
+/// [`backend_call`] for the backend methods that answer `Option` instead of
+/// `Result`. A failed or panicking worker maps to the same `None` those callers
+/// already treat as "not found" or "not authenticated".
+pub(crate) async fn backend_option<T, F>(backend: Arc<dyn ApiBackend>, call: F) -> Option<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&dyn ApiBackend) -> Option<T> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(move || call(backend.as_ref())).await {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::error!(error = %err, "backend worker failed");
+            None
+        }
+    }
+}
+
+/// [`backend_call`] for the audit listing, which the store deliberately makes
+/// infallible: a failed worker yields an empty history instead of an error.
+pub(crate) async fn backend_audit<F>(backend: Arc<dyn ApiBackend>, call: F) -> Vec<AuditRecord>
+where
+    F: FnOnce(&dyn ApiBackend) -> Vec<AuditRecord> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(move || call(backend.as_ref())).await {
+        Ok(entries) => entries,
+        Err(err) => {
+            tracing::error!(error = %err, "backend audit worker failed");
+            Vec::new()
+        }
+    }
+}
+
 #[derive(Clone)]
 struct App {
     state: ServerState,
@@ -275,9 +329,17 @@ async fn dispatch(State(app): State<App>, mut req: Request<Body>) -> Response {
         scope: None,
     };
     if auth.read_auth && auth_protected(&path) {
-        match presented_token(&req, &path)
-            .and_then(|token| app.state.backend.authenticate_token(&token))
-        {
+        let presented = presented_token(&req, &path);
+        let token = match presented {
+            Some(token) => {
+                backend_option(app.state.backend.clone(), move |backend| {
+                    backend.authenticate_token(&token)
+                })
+                .await
+            }
+            None => None,
+        };
+        match token {
             Some(token) => auth.scope = Some(token.scope),
             None => return json_error(StatusCode::UNAUTHORIZED, "read token required"),
         }

@@ -22,6 +22,11 @@ pub use webhook::{
 /// Bounds the flap-suppression window (24h).
 pub const MAX_SETTLE_SECS: i64 = 24 * 60 * 60;
 
+/// Bounds an alert's look-back window (30 days). A larger window is invalid
+/// input, not a silently clamped one: the caller asked for something the
+/// product does not offer.
+pub const MAX_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
+
 /// The alert metrics the watcher can evaluate. The database CHECK constraint
 /// and this enum must agree; the store decodes rows through [`AlertKind`] so
 /// an invalid value cannot round-trip into a [`Rule`].
@@ -131,6 +136,13 @@ pub async fn validate(rule: &Rule) -> Result<()> {
     validate_webhook_url(&rule.webhook_url).await?;
     if rule.window_secs <= 0 {
         bail!("windowSecs must be positive");
+    }
+    if rule.window_secs > MAX_WINDOW_SECS {
+        bail!(
+            "windowSecs {} is over the {} second maximum (30 days)",
+            rule.window_secs,
+            MAX_WINDOW_SECS
+        );
     }
     if rule.settle_secs < 0 {
         bail!("settleSecs cannot be negative");
@@ -400,6 +412,21 @@ mod tests {
             let mut r = rule("error_rate", 0.5);
             r.settle_secs = secs;
             assert!(validate(&r).await.is_err(), "settleSecs={secs} accepted");
+        }
+    }
+
+    #[tokio::test]
+    async fn validate_window_bounds() {
+        let mut at_cap = rule("error_rate", 0.5);
+        at_cap.window_secs = MAX_WINDOW_SECS;
+        assert!(validate(&at_cap).await.is_ok(), "windowSecs=cap rejected");
+        for secs in [MAX_WINDOW_SECS + 1, MAX_WINDOW_SECS * 2, i64::MAX] {
+            let mut over = rule("error_rate", 0.5);
+            over.window_secs = secs;
+            assert!(
+                validate(&over).await.is_err(),
+                "windowSecs={secs} above the cap was accepted"
+            );
         }
     }
 

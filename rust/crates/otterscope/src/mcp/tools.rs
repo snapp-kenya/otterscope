@@ -48,6 +48,64 @@ impl McpStore for crate::store::Store {
     }
 }
 
+/// The production [`McpStore`]: the real store, with every call moved to the
+/// blocking pool. An MCP `tools/call` is an async handler, so a synchronous
+/// SQLite call there would hold an async worker for the duration of the query;
+/// `ingest` and the JSON handlers already offload the same way.
+///
+/// Gated like `backend_real`: unit tests substitute their own `McpStore`, so
+/// this wrapper exists only in builds that wire the real server.
+#[cfg(not(test))]
+pub(crate) struct BlockingStore {
+    store: std::sync::Arc<crate::store::Store>,
+}
+
+#[cfg(not(test))]
+impl BlockingStore {
+    pub(crate) fn new(store: std::sync::Arc<crate::store::Store>) -> Self {
+        Self { store }
+    }
+}
+
+#[cfg(not(test))]
+async fn on_blocking<T, F>(call: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    match tokio::task::spawn_blocking(call).await {
+        Ok(result) => result,
+        Err(err) => Err(anyhow::anyhow!("blocking store task failed: {err}")),
+    }
+}
+
+#[cfg(not(test))]
+impl McpStore for BlockingStore {
+    async fn list_runs(&self, filter: &Filter, limit: i64, offset: i64) -> Result<Vec<Run>> {
+        let store = self.store.clone();
+        let filter = filter.clone();
+        on_blocking(move || store.list_runs(&filter, limit, offset)).await
+    }
+
+    async fn get_run(&self, id: &str) -> Result<Option<(Run, Vec<Step>)>> {
+        let store = self.store.clone();
+        let id = id.to_string();
+        on_blocking(move || store.get_run(&id)).await
+    }
+
+    async fn get_stats(&self, filter: &Filter) -> Result<Stats> {
+        let store = self.store.clone();
+        let filter = filter.clone();
+        on_blocking(move || store.get_stats(&filter)).await
+    }
+
+    async fn list_assertions(&self, project: &str) -> Result<Vec<crate::evals::Assertion>> {
+        let store = self.store.clone();
+        let project = project.to_string();
+        on_blocking(move || store.list_assertions(&project)).await
+    }
+}
+
 /// One MCP tool: metadata plus its name. Handlers are dispatched by name in
 /// [`run_tool`] so the registry stays a plain value.
 #[derive(Debug, Clone)]

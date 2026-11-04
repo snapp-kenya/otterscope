@@ -1765,6 +1765,29 @@ fn shares_round_trip() {
 }
 
 #[test]
+fn share_delete_audits_an_irreversible_hash_not_the_token() {
+    let st = TestStore::open();
+    st.upsert_steps(&sample_run("run-1", 1000)).unwrap();
+    let token = st.create_share("default", "run-1").unwrap();
+    assert!(st.delete_share(&token).unwrap());
+
+    let entries = st.list_audit(10);
+    let entry = entries
+        .iter()
+        .find(|entry| entry.action == "delete" && entry.entity == "share")
+        .expect("share delete audit entry");
+    // Correlation is the digest: an operator holding the token can recompute
+    // it, and nothing else can be recovered from the log.
+    assert_eq!(entry.detail, super::tokens::token_hash(&token));
+    assert_eq!(entry.detail.len(), 64);
+    assert!(entry.detail.chars().all(|c| c.is_ascii_hexdigit()));
+    // No part of the token, including the old 8-character prefix, leaks.
+    assert!(!entry.detail.contains(&token));
+    assert!(!entry.detail.contains(&token[..8]));
+    assert!(!entry.detail.contains('\u{2026}'));
+}
+
+#[test]
 fn saved_views_round_trip() {
     let st = TestStore::open();
     let params = serde_json::json!({"status": "error"});

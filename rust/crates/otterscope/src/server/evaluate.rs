@@ -7,6 +7,7 @@
 //! unbounded CPU and, with a judge key configured, one paid model call per run.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -73,6 +74,24 @@ pub struct EvalStats {
     pub judge_skipped: i64,
 }
 
+/// Run one synchronous store call on the blocking pool.
+///
+/// This async path interleaves SQLite work with judge HTTP calls, so a direct
+/// synchronous store call would hold an async worker for the query's duration.
+/// The store's guard is taken and released inside the closure: it never
+/// survives an `.await`.
+async fn on_blocking_store<T, F>(store: &Arc<Store>, call: F) -> anyhow::Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Store) -> anyhow::Result<T> + Send + 'static,
+{
+    let store = store.clone();
+    match tokio::task::spawn_blocking(move || call(&store)).await {
+        Ok(result) => result,
+        Err(err) => Err(anyhow::anyhow!("blocking store task failed: {err}")),
+    }
+}
+
 /// Caps paid judge calls in one pass. `remaining < 0` means unlimited (the
 /// ingest path, already bounded by batch size).
 struct JudgeBudget {
@@ -96,7 +115,7 @@ impl JudgeBudget {
 /// their `sampleRate`, or unconditionally when `judge_all` is set. Safe to
 /// re-run: results upsert by `(project, run, assertion)`.
 pub async fn evaluate_runs(
-    store: &Store,
+    store: &Arc<Store>,
     judge: &evals::Endpoint,
     refs: &[(String, String)],
     judge_all: bool,
@@ -112,7 +131,7 @@ pub async fn evaluate_runs(
 }
 
 async fn evaluate_runs_with_budget(
-    store: &Store,
+    store: &Arc<Store>,
     judge: &evals::Endpoint,
     refs: &[(String, String)],
     judge_all: bool,
@@ -122,41 +141,54 @@ async fn evaluate_runs_with_budget(
     let mut cache: HashMap<String, Vec<Assertion>> = HashMap::new();
     for (ref_project, run_id) in refs {
         let project = if ref_project.is_empty() {
-            "default"
+            "default".to_string()
         } else {
-            ref_project.as_str()
+            ref_project.clone()
         };
-        let Some((run, steps)) = store.get_run_in_project(project, run_id)? else {
+        let run_id = run_id.clone();
+        let Some((run, steps)) = on_blocking_store(store, {
+            let project = project.clone();
+            move |store| store.get_run_in_project(&project, &run_id)
+        })
+        .await?
+        else {
             return Err(anyhow::Error::new(crate::store::Error::NotFound));
         };
         if run.status == Status::Running {
             continue;
         }
         stats.runs += 1;
-        if !cache.contains_key(project) {
-            let enabled = store
-                .list_assertions(project)?
-                .into_iter()
-                .filter(|assertion| assertion.enabled)
-                .collect();
-            cache.insert(project.to_string(), enabled);
+        if !cache.contains_key(&project) {
+            let enabled = on_blocking_store(store, {
+                let project = project.clone();
+                move |store| store.list_assertions(&project)
+            })
+            .await?
+            .into_iter()
+            .filter(|assertion| assertion.enabled)
+            .collect();
+            cache.insert(project.clone(), enabled);
         }
-        let assertions = cache.get(project).cloned().unwrap_or_default();
+        let assertions = cache.get(&project).cloned().unwrap_or_default();
         if assertions.is_empty() {
             continue;
         }
         let judged: HashSet<i64> = if judge_all {
             HashSet::new()
         } else {
-            store
-                .results_for_run(project, &run.id)
-                .map(|results| {
-                    results
-                        .into_iter()
-                        .map(|result| result.assertion_id)
-                        .collect()
-                })
-                .unwrap_or_default()
+            on_blocking_store(store, {
+                let project = project.clone();
+                let run_id = run.id.clone();
+                move |store| store.results_for_run(&project, &run_id)
+            })
+            .await
+            .map(|results| {
+                results
+                    .into_iter()
+                    .map(|result| result.assertion_id)
+                    .collect()
+            })
+            .unwrap_or_default()
         };
         let mut results = Vec::new();
         for assertion in &assertions {
@@ -183,7 +215,12 @@ async fn evaluate_runs_with_budget(
             }
             results.push(evals::evaluate(assertion, &run, &steps));
         }
-        store.save_assertion_results(project, &run.id, &results)?;
+        on_blocking_store(store, {
+            let project = project.clone();
+            let run_id = run.id.clone();
+            move |store| store.save_assertion_results(&project, &run_id, &results)
+        })
+        .await?;
     }
     Ok(stats)
 }
@@ -225,7 +262,7 @@ fn run_cap_with(server_max: i64, options: &EvaluateOptions) -> i64 {
 /// caller's bound, the run cap and the judge-call cap; what the caps skipped is
 /// reported, never dropped.
 pub async fn evaluate_project(
-    store: &Store,
+    store: &Arc<Store>,
     judge: &evals::Endpoint,
     options: &EvaluateOptions,
 ) -> anyhow::Result<EvaluateReport> {
@@ -271,8 +308,8 @@ pub async fn evaluate_project(
         until: options.until,
         ..Filter::default()
     };
-    let candidates = completed_run_count(store, &filter)?;
-    let refs = collect_run_refs(store, &filter, report.run_limit)?;
+    let candidates = completed_run_count(store, &filter).await?;
+    let refs = collect_run_refs(store, &filter, report.run_limit).await?;
     let stats = evaluate_runs_with_budget(store, judge, &refs, true, &mut budget).await?;
     report.runs_evaluated = stats.runs;
     report.judge_calls = stats.judge_calls;
@@ -287,22 +324,27 @@ pub async fn evaluate_project(
 
 /// Count the completed runs a window selects, so the caller can be told
 /// exactly how many the cap left behind.
-fn completed_run_count(store: &Store, filter: &Filter) -> anyhow::Result<i64> {
-    let total = store.count_runs(filter)?;
-    let running = store.count_runs(&Filter {
+async fn completed_run_count(store: &Arc<Store>, filter: &Filter) -> anyhow::Result<i64> {
+    let total = on_blocking_store(store, {
+        let filter = filter.clone();
+        move |store| store.count_runs(&filter)
+    })
+    .await?;
+    let running_filter = Filter {
         project: filter.project.clone(),
         since: filter.since,
         until: filter.until,
         status: Status::Running.as_str().to_string(),
         ..Filter::default()
-    })?;
+    };
+    let running = on_blocking_store(store, move |store| store.count_runs(&running_filter)).await?;
     Ok(total - running.min(total))
 }
 
 /// Load at most `limit` completed runs, paging so a wide window costs a bounded
 /// read instead of loading the whole table.
-fn collect_run_refs(
-    store: &Store,
+async fn collect_run_refs(
+    store: &Arc<Store>,
     filter: &Filter,
     limit: i64,
 ) -> anyhow::Result<Vec<(String, String)>> {
@@ -310,7 +352,11 @@ fn collect_run_refs(
     let mut refs = Vec::new();
     let mut offset = 0;
     while (refs.len() as i64) < limit {
-        let runs = store.list_runs(filter, PAGE, offset)?;
+        let runs = on_blocking_store(store, {
+            let filter = filter.clone();
+            move |store| store.list_runs(&filter, PAGE, offset)
+        })
+        .await?;
         if runs.is_empty() {
             break;
         }

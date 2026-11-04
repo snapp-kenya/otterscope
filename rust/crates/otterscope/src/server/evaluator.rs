@@ -77,7 +77,7 @@ impl Evaluator {
     }
 }
 
-async fn evaluate(store: &Store, judge: &Endpoint, refs: Vec<(String, String)>) {
+async fn evaluate(store: &Arc<Store>, judge: &Endpoint, refs: Vec<(String, String)>) {
     if let Err(err) = super::evaluate::evaluate_runs(store, judge, &refs, false).await {
         tracing::error!(error = %err, "assertion evaluation failed");
     }
