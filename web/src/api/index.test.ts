@@ -8,12 +8,15 @@ import {
   fetchRuns,
   fetchSharedRun,
   fetchTokens,
+  mintShare,
+  revokeShare,
   type AlertInput,
 } from "@/api";
 
 type FetchCall = { url: string; init: RequestInit };
 
 const originalFetch = globalThis.fetch;
+const originalPrompt = window.prompt;
 
 const stubFetch = (responses: Response[]): FetchCall[] => {
   const calls: FetchCall[] = [];
@@ -49,8 +52,24 @@ const run = {
   error: "",
 };
 
+const stubPrompt = (answer: string | null): (() => number) => {
+  let prompts = 0;
+  window.prompt = (() => {
+    prompts += 1;
+    return answer;
+  }) as typeof window.prompt;
+  return () => prompts;
+};
+
+const adminRequired = () => json({ error: "admin token required" }, 403);
+
+const authHeader = (call: FetchCall) =>
+  new Headers(call.init.headers).get("Authorization");
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  window.prompt = originalPrompt;
+  localStorage.clear();
 });
 
 describe("Rust API request shapes", () => {
@@ -172,5 +191,106 @@ describe("Rust API request shapes", () => {
       }),
     ]);
     expect(await fetchMetricsText()).toContain("otterscope_runs_total");
+  });
+});
+
+describe("share admin recovery", () => {
+  it("prompts for an admin token on 403 and retries minting once", async () => {
+    localStorage.setItem("otterscope_token", "read-token");
+    const calls = stubFetch([
+      adminRequired(),
+      json({ token: "share-token", url: "/otterscope/s/share-token" }, 201),
+    ]);
+    const prompts = stubPrompt("  admin-token  ");
+
+    const share = await mintShare("run-1");
+
+    expect(share.token).toBe("share-token");
+    expect(calls).toHaveLength(2);
+    expect(authHeader(calls[0]!)).toBe("Bearer read-token");
+    expect(authHeader(calls[1]!)).toBe("Bearer admin-token");
+    expect(prompts()).toBe(1);
+    expect(localStorage.getItem("otterscope_token")).toBe("admin-token");
+  });
+
+  it("surfaces the 403 after one failed mint retry without prompting again", async () => {
+    const calls = stubFetch([adminRequired(), adminRequired()]);
+    const prompts = stubPrompt("admin-token");
+
+    try {
+      await mintShare("run-1");
+      throw new Error("expected the mint to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      if (error instanceof ApiError) {
+        expect(error.status).toBe(403);
+        expect(error.message).toContain("admin token required");
+      }
+    }
+
+    expect(calls).toHaveLength(2);
+    expect(prompts()).toBe(1);
+  });
+
+  it("prompts and retries revoking a share link", async () => {
+    localStorage.setItem("otterscope_token", "read-token");
+    const calls = stubFetch([
+      adminRequired(),
+      new Response(null, { status: 204 }),
+    ]);
+    const prompts = stubPrompt("admin-token");
+
+    await revokeShare("share-token");
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.init.method).toBe("DELETE");
+    expect(authHeader(calls[1]!)).toBe("Bearer admin-token");
+    expect(prompts()).toBe(1);
+  });
+
+  it("surfaces the 403 after one failed revoke retry", async () => {
+    const calls = stubFetch([adminRequired(), adminRequired()]);
+    const prompts = stubPrompt("admin-token");
+
+    try {
+      await revokeShare("share-token");
+      throw new Error("expected the revoke to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      if (error instanceof ApiError) expect(error.status).toBe(403);
+    }
+
+    expect(calls).toHaveLength(2);
+    expect(prompts()).toBe(1);
+  });
+
+  it("does not retry when the admin prompt is dismissed", async () => {
+    const calls = stubFetch([adminRequired()]);
+    const prompts = stubPrompt(null);
+
+    try {
+      await mintShare("run-1");
+      throw new Error("expected the mint to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(prompts()).toBe(1);
+  });
+
+  it("does not prompt for a 403 that is not about admin scope", async () => {
+    const calls = stubFetch([json({ error: "origin not allowed" }, 403)]);
+    const prompts = stubPrompt("admin-token");
+
+    try {
+      await mintShare("run-1");
+      throw new Error("expected the mint to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+    }
+
+    expect(calls).toHaveLength(1);
+    expect(prompts()).toBe(0);
   });
 });

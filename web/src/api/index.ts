@@ -44,7 +44,14 @@ import {
   type TokensWire,
   type ViewsWire,
 } from "@/api/contract";
-import { deleteResource, getJson, postJson, request } from "@/api/client";
+import {
+  adminDelete,
+  adminPostJson,
+  deleteResource,
+  getJson,
+  postJson,
+  request,
+} from "@/api/client";
 
 export * from "@/api/contract";
 export {
@@ -124,10 +131,12 @@ export const fetchShares = async (id: string, signal?: AbortSignal) =>
   );
 
 export const mintShare = async (id: string) =>
-  decodeShareMint(await postJson<ShareMintWire>(endpoints.mintShare(id)));
+  decodeShareMint(
+    await adminPostJson<ShareMintWire>(endpoints.mintShare(id)),
+  );
 
 export const revokeShare = async (token: string): Promise<void> =>
-  deleteResource(endpoints.revokeShare(token));
+  adminDelete(endpoints.revokeShare(token));
 
 export const fetchAlerts = async (signal?: AbortSignal) =>
   decodeAlerts(await getJson<AlertsWire>(endpoints.alerts(), signal));

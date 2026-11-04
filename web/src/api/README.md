@@ -16,8 +16,9 @@ RFC 9457 problem documents.
   `/otterscope/api/runs`.
 - `Authorization: Bearer <token>` is attached from `localStorage`; a `401`
   prompts once for a token and retries. `GET /api/stream` uses `?token=` because
-  EventSource cannot set headers. `403` means the token lacks admin scope and is
-  shown as an error, not retried.
+  EventSource cannot set headers. A `403 admin token required` on share minting
+  or revocation prompts once for an admin token, stores it, and retries; a second
+  failure is surfaced. Other `403`s are shown without prompting.
 - Writes with a body use `Content-Type: application/json`; the server rejects
   other content types with `415` and bodies over 1 MiB with `413`.
 - JSON responses carry `Cache-Control: no-store`; the server stamps CSP,
@@ -33,9 +34,9 @@ RFC 9457 problem documents.
 | GET | `/api/runs` | `{ runs }`; `limit` 1..500 (default 50), `offset`; filters below |
 | GET | `/api/runs.csv` | `text/csv`; same filters; 10,000-row cap |
 | GET | `/api/runs/{id}` | `{ run, steps, assertionResults }`; `404` unknown |
-| POST | `/api/runs/{id}/share` | `201 { token, url }` |
-| GET | `/api/runs/{id}/shares` | `{ shares: [{ token, createdAt }] }` |
-| DELETE | `/api/shares/{token}` | `204`, or `404` |
+| POST | `/api/runs/{id}/share` | admin; `201 { token, url }` |
+| GET | `/api/runs/{id}/shares` | read-level; `{ shares: [{ token, createdAt }] }` |
+| DELETE | `/api/shares/{token}` | admin; `204`, or `404` |
 | GET | `/api/shared/{token}` | public `{ run, steps }`, or `404` |
 | GET | `/api/stats` | same filters; includes `assertionRates` |
 | GET | `/api/assertions?project=` | `{ assertions }`; client only |
@@ -92,14 +93,7 @@ component never renders `undefined`.
   style attributes: timeline geometry is SVG and the controls are native
   elements, so the production policy produces no console violations.
 
-## Observed server deviations
+## Observed server deviation
 
-Verified against the running Rust server while aligning this client:
-
-- The JSON API does not currently send `Cache-Control: no-store`; nothing in the
-  server sets it. The UI works without it and does not add client-side caching.
-- `POST /api/runs/{id}/share` and `DELETE /api/shares/{token}` are mutating but
-  are not admin-guarded, so a read token can mint and revoke links even though
-  the contract says admin tokens cover every mutating route.
-- `POST /mcp` answers `200` on the current build because MCP is compiled in;
-  the documented `501` applies to builds without it.
+- `POST /mcp` answers `200` on the current build because MCP is compiled in; the
+  documented `501` applies to builds without it.

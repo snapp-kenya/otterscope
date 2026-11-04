@@ -7,6 +7,7 @@ import {
   type ShareMint,
 } from "@/api";
 import { fmtStart } from "@/lib/format";
+import { shareActionError } from "@/lib/shareActions";
 import { queryKeys, sharesQuery } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import { ErrorNotice } from "@/components/error-notice";
@@ -31,8 +32,7 @@ export const SharesPanel = ({ runId }: { runId: string }) => {
         queryKey: queryKeys.shares(runId),
       });
     },
-    onError: (error) =>
-      setActionError(`Couldn't mint a link — ${errorMessage(error)}.`),
+    onError: (error) => setActionError(shareActionError("create", error)),
   });
 
   const revoke = useMutation({
@@ -47,8 +47,7 @@ export const SharesPanel = ({ runId }: { runId: string }) => {
         queryKey: queryKeys.shares(runId),
       });
     },
-    onError: (error) =>
-      setActionError(`Couldn't revoke the link — ${errorMessage(error)}.`),
+    onError: (error) => setActionError(shareActionError("revoke", error)),
   });
 
   const copy = async () => {
