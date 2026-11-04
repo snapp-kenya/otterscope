@@ -1,12 +1,7 @@
+import { runStatuses } from "@/api";
 import type { CompareSide } from "@/lib/compare";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select } from "@/components/ui/select";
 
 const ANY_STATUS = "any-status";
 const ALL_TIME = "all-time";
@@ -24,35 +19,35 @@ export const CompareSideForm = ({
   return (
     <div className="mt-2 flex flex-wrap gap-2">
       <Select
+        className="w-[7.5rem]"
+        aria-label="status filter"
         value={side.status || ANY_STATUS}
         onValueChange={(value) =>
           update({ status: value === ANY_STATUS ? "" : value })
         }
       >
-        <SelectTrigger className="w-[7.5rem]" aria-label="status filter">
-          <SelectValue placeholder="any status" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ANY_STATUS}>any status</SelectItem>
-          <SelectItem value="ok">ok</SelectItem>
-          <SelectItem value="error">error</SelectItem>
-        </SelectContent>
+        <option value={ANY_STATUS}>any status</option>
+        {side.status && !runStatuses.some((s) => s === side.status) ? (
+          <option value={side.status}>{side.status}</option>
+        ) : null}
+        {runStatuses.map((status) => (
+          <option key={status} value={status}>
+            {status}
+          </option>
+        ))}
       </Select>
       <Select
+        className="w-[7.5rem]"
+        aria-label="time range"
         value={side.range || ALL_TIME}
         onValueChange={(value) =>
           update({ range: value === ALL_TIME ? "" : value })
         }
       >
-        <SelectTrigger className="w-[7.5rem]" aria-label="time range">
-          <SelectValue placeholder="all time" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL_TIME}>all time</SelectItem>
-          <SelectItem value="1h">last hour</SelectItem>
-          <SelectItem value="24h">last 24h</SelectItem>
-          <SelectItem value="7d">last 7 days</SelectItem>
-        </SelectContent>
+        <option value={ALL_TIME}>all time</option>
+        <option value="1h">last hour</option>
+        <option value="24h">last 24h</option>
+        <option value="7d">last 7 days</option>
       </Select>
       <Input
         className="w-[8.5rem]"

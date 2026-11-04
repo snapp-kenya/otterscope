@@ -12,13 +12,7 @@ import {
 } from "@/lib/alerts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -84,19 +78,16 @@ export const AlertFormDialog = ({
               onChange={(event) => update({ name: event.target.value })}
             />
             <Select
+              className="w-[13rem]"
+              aria-label="alert type"
               value={draft.type}
               onValueChange={(value) => update({ type: value })}
             >
-              <SelectTrigger className="w-[13rem]" aria-label="alert type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {alertTypes.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+              {alertTypes.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </Select>
             <Input
               placeholder="threshold"
@@ -116,42 +107,33 @@ export const AlertFormDialog = ({
               />
             ) : null}
             <Select
+              className="w-[8rem]"
+              aria-label="alert window"
               value={String(draft.windowSecs)}
               onValueChange={(value) =>
                 update({ windowSecs: Number(value) })
               }
             >
-              <SelectTrigger className="w-[8rem]" aria-label="alert window">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {alertWindows.map((option) => (
-                  <SelectItem key={option.value} value={String(option.value)}>
-                    over {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+              {alertWindows.map((option) => (
+                <option key={option.value} value={String(option.value)}>
+                  over {option.label}
+                </option>
+              ))}
             </Select>
             <Select
+              className="w-[11rem]"
+              aria-label="settle time"
+              title="How long the condition must hold before notifying, in both directions"
               value={String(draft.settleSecs)}
               onValueChange={(value) =>
                 update({ settleSecs: Number(value) })
               }
             >
-              <SelectTrigger
-                className="w-[11rem]"
-                aria-label="settle time"
-                title="How long the condition must hold before notifying, in both directions"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {alertSettles.map((option) => (
-                  <SelectItem key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+              {alertSettles.map((option) => (
+                <option key={option.value} value={String(option.value)}>
+                  {option.label}
+                </option>
+              ))}
             </Select>
             <Input
               placeholder={

@@ -11,11 +11,23 @@ const kindText: Record<Step["kind"], string> = {
 };
 
 const barColor: Record<Step["kind"], string> = {
-  agent: "bg-agent",
-  llm: "bg-primary",
-  tool: "bg-tool",
-  generic: "bg-muted-foreground",
+  agent: "fill-agent",
+  llm: "fill-primary",
+  tool: "fill-tool",
+  generic: "fill-muted-foreground",
 };
+
+const depthIndent = [
+  "pl-0",
+  "pl-[1.2rem]",
+  "pl-[2.4rem]",
+  "pl-[3.6rem]",
+  "pl-[4.8rem]",
+  "pl-[6rem]",
+  "pl-[7.2rem]",
+  "pl-[8.4rem]",
+  "pl-[9.6rem]",
+];
 
 const depthOf = (step: Step, byId: Map<string, Step>): number => {
   let depth = 0;
@@ -55,8 +67,12 @@ export const RunTimeline = ({
             onClick={() => onSelect(step.id)}
           >
             <span
-              className="step-name overflow-hidden text-ellipsis whitespace-nowrap"
-              style={{ paddingLeft: `${depthOf(step, byId) * 1.2}rem` }}
+              className={cn(
+                "step-name overflow-hidden text-ellipsis whitespace-nowrap",
+                depthIndent[
+                  Math.min(depthOf(step, byId), depthIndent.length - 1)
+                ],
+              )}
             >
               <span
                 className={cn(
@@ -77,14 +93,29 @@ export const RunTimeline = ({
             <span className="step-duration numeric text-right text-muted-foreground">
               {fmtDuration(step.durationMs)}
             </span>
-            <span className="bar-track relative block h-2.5 rounded-[5px] bg-surface">
-              <span
-                className={cn(
-                  "bar absolute top-0 h-full rounded-[5px]",
-                  barColor[step.kind],
-                )}
-                style={{ left: `${bar.left}%`, width: `${bar.width}%` }}
-              />
+            <span className="bar-track block h-2.5 overflow-hidden rounded-[5px]">
+              <svg
+                className="block h-full w-full"
+                viewBox="0 0 1000 10"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <rect
+                  className="fill-surface"
+                  x="0"
+                  y="0"
+                  width="1000"
+                  height="10"
+                />
+                <rect
+                  className={cn("bar", barColor[step.kind])}
+                  x={bar.left * 10}
+                  y="0"
+                  width={bar.width * 10}
+                  height="10"
+                  rx="1"
+                />
+              </svg>
             </span>
           </button>
         );

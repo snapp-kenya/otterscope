@@ -1,11 +1,6 @@
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select } from "@/components/ui/select";
+import { runStatuses } from "@/api";
 import type { FilterState } from "@/lib/filters";
 
 const ANY_STATUS = "any-status";
@@ -31,36 +26,35 @@ export const RunsFilters = ({
         onChange={(event) => update({ q: event.target.value })}
       />
       <Select
+        className="w-[7.5rem]"
+        aria-label="status filter"
         value={filters.status || ANY_STATUS}
         onValueChange={(value) =>
           update({ status: value === ANY_STATUS ? "" : value })
         }
       >
-        <SelectTrigger className="w-[7.5rem]" aria-label="status filter">
-          <SelectValue placeholder="any status" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ANY_STATUS}>any status</SelectItem>
-          <SelectItem value="ok">ok</SelectItem>
-          <SelectItem value="error">error</SelectItem>
-          <SelectItem value="running">running</SelectItem>
-        </SelectContent>
+        <option value={ANY_STATUS}>any status</option>
+        {filters.status && !runStatuses.some((s) => s === filters.status) ? (
+          <option value={filters.status}>{filters.status}</option>
+        ) : null}
+        {runStatuses.map((status) => (
+          <option key={status} value={status}>
+            {status}
+          </option>
+        ))}
       </Select>
       <Select
+        className="w-[7.5rem]"
+        aria-label="time range"
         value={filters.range || ALL_TIME}
         onValueChange={(value) =>
           update({ range: value === ALL_TIME ? "" : value })
         }
       >
-        <SelectTrigger className="w-[7.5rem]" aria-label="time range">
-          <SelectValue placeholder="all time" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={ALL_TIME}>all time</SelectItem>
-          <SelectItem value="1h">last hour</SelectItem>
-          <SelectItem value="24h">last 24h</SelectItem>
-          <SelectItem value="7d">last 7 days</SelectItem>
-        </SelectContent>
+        <option value={ALL_TIME}>all time</option>
+        <option value="1h">last hour</option>
+        <option value="24h">last 24h</option>
+        <option value="7d">last 7 days</option>
       </Select>
       <Input
         className="w-[8.5rem]"

@@ -114,10 +114,10 @@ describe("RunView", () => {
 
   it("lays the timeline bars out proportionally", async () => {
     await render(detail);
-    const bars = host.querySelectorAll(".bar");
+    const bars = host.querySelectorAll("svg rect.bar");
     expect(bars).toHaveLength(2);
-    expect(bars[0]!.getAttribute("style")).toContain("left: 25%");
-    expect(bars[0]!.getAttribute("style")).toContain("width: 25%");
+    expect(bars[0]!.getAttribute("x")).toBe("250");
+    expect(bars[0]!.getAttribute("width")).toBe("250");
   });
 
   it("opens the LLM inspector with tokens, cache and reasoning", async () => {
