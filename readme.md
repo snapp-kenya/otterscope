@@ -10,34 +10,87 @@ One self-contained binary. One SQLite file. No ClickHouse, no Redis, no S3, no s
 
 ## Quick start
 
-Deployment is a container image, and the image is built from this repository.
-Nothing is published for you to pull: no archive, no package, no image on a
-public registry.
+Otterscope's only deployment target is **Kubernetes via k3d on the operator's
+MacBook Pro**. Nothing is published: no image, no archive, no package. The
+image is built from this checkout, tagged with the short git SHA, imported into
+the local k3d cluster, and never pushed anywhere.
+
+Prerequisites: Docker Desktop with the daemon running, `k3d`, `kubectl`, and a
+checkout of this repository. Rust and Bun are not needed on the host; the build
+runs in Docker.
 
 ```sh
-# build the image from this repository, then run it:
-docker build -t otterscope .
-docker run --cap-drop ALL --cap-add NET_BIND_SERVICE \
-  -p 127.0.0.1:8080:80 -v otterscope:/data \
-  otterscope serve -db /data/otterscope.db
+# From the repository root. Refuses a dirty tree, builds HEAD, creates the k3d
+# cluster if it is missing, imports the image and waits for the rollout.
+deploy/k8s/deploy.sh
+
+# In another shell: publish the Service on localhost.
+kubectl -n otterscope port-forward svc/otterscope 8080:80
+```
+
+The Deployment runs `otterscope:<short-sha>`; the script prints that tag. Check
+it through the port-forward:
+
+```sh
+curl -fsS http://127.0.0.1:8080/healthz
+# {"status":"ok","version":"<short-sha>"}
+```
+
+Open **http://localhost:8080**. Mint the first credentials against the live
+database inside the server pod — the secrets are printed once:
+
+```sh
+# Admin token: mint/revoke tokens, assertions, views, alerts, on-demand evals.
+kubectl -n otterscope exec deploy/otterscope -- otterscope token add admin -admin
+
+# Read token: the UI/dashboard query surface.
+kubectl -n otterscope exec deploy/otterscope -- otterscope token add ui
+
+# Project + ingest key for agents.
+kubectl -n otterscope exec deploy/otterscope -- otterscope project add agents
+```
+
+Paste the read token into the UI, or send it as `Authorization: Bearer <token>`.
+`otterscope token list` and `project list` never print secrets again. The full
+runbook (upgrade, rollback, backup, teardown) is
+[deploy/readme.md](deploy/readme.md).
+
+Point an OTel-instrumented agent **in the cluster** at the Service. Port 80 is
+implied and the exporter appends `/v1/traces` itself:
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otterscope.otterscope.svc.cluster.local
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <ingest key>"
+```
+
+For an agent on the laptop, use the port-forward instead (same key):
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:8080
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <ingest key>"
 ```
 
 The server has **one HTTP listener, always on port 80**. The UI, JSON API,
 `/mcp`, `/healthz`, share links and OTLP ingest (`POST /v1/traces`) all live
-there. TLS and how the port is exposed are the platform's job: behind Istio the
-service is reached on port 80 and Istio terminates TLS.
+there. The Kubernetes Service exposes port 80; TLS, hostnames and any external
+routing are the cluster's business, not the application's.
 
-Port 80 is privileged. A native run therefore needs privilege — run it as root
-or grant the binary `CAP_NET_BIND_SERVICE` on Linux (`sudo setcap
-'cap_net_bind_service=+ep' ./otterscope`). Containers are different: Docker's
-runtime sets `net.ipv4.ip_unprivileged_port_start=0`, so the non-root image can
-bind 80 there without the capability, while Kubernetes/containerd keeps the
-default boundary and needs `CAP_NET_BIND_SERVICE`. There is deliberately no
-flag, environment variable or config key to change the port.
+Port 80 is privileged. The image runs as uid 65532; the Deployment grants only
+`NET_BIND_SERVICE` so that user can bind it, because Kubernetes/containerd keeps
+ports below 1024 privileged. A native development run needs root or the same
+capability. There is deliberately no flag, environment variable or config key
+to change the port.
 
-The process binds `0.0.0.0:80`, so add `-read-auth` before anything else can
-reach it; without it the API is a full read/write surface for anyone who can
-reach the port. For reproducible deployments, put the rest in a config file —
+The process binds `0.0.0.0:80`; the manifests enable `OTTERSCOPE_READ_AUTH`, so
+the UI/API need a Bearer token and OTLP ingest needs a project ingest key. Auth
+is off by default in the binary itself: before exposing a native run, pass
+`-read-auth`. Read tokens cover the query surface; minting or revoking tokens
+and share links, writing assertions, saved views or alerts, and on-demand
+evaluation need an admin token. `otterscope token list` shows ids, scopes and
+last use, never a secret. If the UI is reached by a hostname through a reverse
+proxy, list that origin in `OTTERSCOPE_ALLOWED_ORIGINS` — the API checks
+`Origin` and `Host` on every request and refuses a name it was not told about.
+For reproducible deployments, put the rest in a config file —
 `serve -config otterscope.json` (see
 [docs/otterscope.example.json](docs/otterscope.example.json)) — or `OTTERSCOPE_*`
 env vars; flags override env override the file.
@@ -51,11 +104,10 @@ so ingest lands at `/otterscope/v1/traces`. The UI bundle bakes its router and
 API base at build time, so **a prefixed deployment requires an image built with
 the matching build arg** — an image built without it targets the root path.
 Build the UI with the same value (`OTTERSCOPE_BASE_PATH=/otterscope bun run
-build` in `web/`) and the image with:
-
-```sh
-docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
-```
+build` in `web/`) and pass the same value as the image's
+`OTTERSCOPE_BASE_PATH` build arg. `deploy.sh` builds the root-path image, so a
+prefixed deployment needs a manual build plus `k3d image import`; see the
+optional Ingress section in [deploy/readme.md](deploy/readme.md).
 
 If the image's baked base and the runtime `-base-path` disagree, the server
 still starts — the API, OTLP receiver and MCP remain valid — but it logs a
@@ -63,60 +115,6 @@ prominent `WARN` and the UI will not work (its router and API calls target the
 build-time path). The default is the root, and a request outside the prefix is
 a 404 rather than the SPA, so a misrouted path cannot land on another
 application's index.
-
-Auth is off by default. Before you expose the instance, pass `-read-auth`: the
-UI and API then need a Bearer token. Mint the first one with `otterscope token
-add local` — it is shown only at creation and stored only as a SHA-256 digest;
-`-admin` mints a token that may also mutate. Read tokens cover the query
-surface; minting or revoking tokens and share links, writing assertions, saved
-views or alerts, and on-demand evaluation need an admin token. `otterscope
-token list` shows ids, scopes and last use, never a secret. With read auth on,
-OTLP ingest also requires a project ingest key (`otterscope project add
-my-agent`); the keyless default project is closed. If the UI is reached by a
-hostname through a reverse proxy, list that origin in
-`OTTERSCOPE_ALLOWED_ORIGINS` — the API checks `Origin` and `Host` on every
-request and refuses a name it was not told about.
-
-Docker works the same way. `otterscope` below is the image you built with
-`docker build -t otterscope .`; there is no published image to pull. It is a
-distroless build running as uid 65532. Docker allows that user to bind 80
-because the runtime sets `net.ipv4.ip_unprivileged_port_start=0`; the command
-below still adds only `CAP_NET_BIND_SERVICE` and drops everything else, so the
-same invocation also works on runtimes that keep privileged ports privileged
-(Kubernetes/containerd). The host-side port is yours to choose — this example
-publishes loopback port 8080 to the container's 80:
-
-```sh
-docker run --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
-  -p 127.0.0.1:8080:80 -v otterscope:/data \
-  otterscope serve -db /data/otterscope.db
-```
-
-[docker-compose.yml](docker-compose.yml) is the maintained version of that
-command, with read auth on and the UI published to 127.0.0.1 only. Its `image:`
-is a placeholder for the image you build and push to your own registry; point
-it at your build (or rebuild the same tag) before `docker compose up`. A named
-volume inherits `/data`'s ownership from the image; a host bind mount has to
-be owned by 65532.
-
-Point any OTel-instrumented agent at the base URL of your deployment:
-
-```sh
-# exporters append /v1/traces themselves; use the host/port you published
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080
-```
-
-With `-read-auth` on, also send a project ingest key (mint one with
-`otterscope project add my-agent`); keyless ingest is only accepted when read
-auth is off:
-
-```sh
-export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <ingest key>"
-```
-
-Open **http://localhost:8080** (for a host binary listening on 80 it is
-**http://localhost**). No account by default, no config file, no other
-services.
 
 Ingest is bounded. One OTLP request may carry at most 10,000 spans and touch
 at most 1,000 distinct traces (`-ingest-max-spans`, `-ingest-max-trace-ids`);
@@ -126,7 +124,8 @@ ingest key may send 50 batches a second by default (`-ingest-rate`,
 rejected and reported in OTLP partial success instead of overwriting that
 service's step.
 
-Want to poke around before wiring an agent? `./otterscope sample` seeds realistic demo runs.
+Want to poke around before wiring an agent? Seed realistic demo runs inside the
+server pod: `kubectl -n otterscope exec deploy/otterscope -- otterscope sample`.
 
 Want your agent to inspect *itself*? Otterscope ships a stateless [MCP server](docs/mcp.md) (protocol revision `2026-07-28`), so Claude Code and other MCP clients can query your runs, cost, and stats:
 
@@ -150,7 +149,8 @@ claude mcp add otterscope --transport http http://localhost:8080/mcp
 
   ![Compare — two models side by side: error rate, latency percentiles, cost, assertion pass rates](docs/screenshots/compare.png)
 - **Drop-in OTel compatibility** — normalizes the OTel GenAI conventions (both current dialects), OpenInference (OpenAI Agents SDK, CrewAI, LangChain), and the Vercel AI SDK. Raw payloads are retained, so old data benefits from future normalizer improvements.
-- **Ask your agent about itself** — a built-in [MCP server](docs/mcp.md) (`POST /mcp`, stateless revision `2026-07-28`) lets Claude Code and other MCP clients query your runs, steps, cost, and stats; it needs the same read token when `-read-auth` is on. `claude mcp add otterscope --transport http http://localhost/mcp` (substitute the port your deployment publishes).
+- **Ask your agent about itself** — a built-in [MCP server](docs/mcp.md) (`POST /mcp`, stateless revision `2026-07-28`) lets Claude Code and other MCP clients query your runs, steps, cost, and stats; it needs the same read token when `-read-auth` is on. `claude mcp add otterscope --transport http http://localhost:8080/mcp` (the
+port-forward above; `/healthz` and port 80 are inside the cluster).
 - **Projects + ingest keys** for isolating multiple agents; **API tokens** scoped read or admin (`otterscope token add`, `-admin` for one that may mutate) to script against your data or build external dashboards — enforce them with `serve -read-auth` when you expose the instance, which also makes an ingest key mandatory. Optional retention sweep (`-retention 720h`) if you *want* to delete data; it removes the full-text index rows with the runs and vacuums, so deleted content stops being searchable.
 - **Backups you can trust** — `otterscope backup -o snapshot.db` for a consistent copy (0600, like the database), and Otterscope auto-snapshots before applying a pending migration after the schema baseline, keeping the newest one. (A database from the old pre-baseline schema is refused, not migrated; see the upgrade note below.) The database, its `-wal`/`-shm` siblings and a directory Otterscope creates for them are owner-only too.
 - **Prometheus metrics** at `/metrics` (runs, statuses, steps, DB size including WAL and SHM, firing alerts) — the observability tool is itself observable. With `-read-auth` it takes the same read token as the API.
@@ -175,15 +175,15 @@ Otterscope is Apache-2.0, ships as one binary and one container image, and is bu
 
 ## Install
 
-Deployment is the container image, built from this repository. There is no
-download, no archive and no package-manager channel.
+There is exactly one supported install: Kubernetes via k3d on macOS, using
+[deploy/k8s/deploy.sh](deploy/k8s/deploy.sh) as described in the quick start and
+[deploy/readme.md](deploy/readme.md). The image is built locally and never
+published; there is no archive, package manager, registry step or Helm chart.
 
-- **Container image** — `docker build -t otterscope .` (the lowercase
-  `dockerfile` at the repository root). The image is the artifact; pushing it to
-  a registry your cluster can reach is the deploying team's job.
-- **From source** — Bun + Rust; see [Development](#development).
-- **Kubernetes** — plain YAML plus `kustomize`, no Helm; deploy the image you
-  built using [deploy/readme.md](deploy/readme.md).
+- **Kubernetes (k3d)** — Docker Desktop, `k3d` and `kubectl`; `deploy.sh`
+  builds the image, imports it into the cluster and applies the manifests.
+- **From source** — Bun + Rust, for working on the code rather than deploying
+  it; see [Development](#development).
 
 ## Development
 
@@ -193,13 +193,13 @@ binary if you want the real UI:
 ```sh
 cd web && bun install && bun run build
 cd ../rust && cargo build --release
-sudo ./target/release/otterscope serve   # port 80 is privileged
+sudo ./target/release/otterscope serve   # dev only; port 80 is privileged
 ```
 
 There is no port setting: the one listener is always on 80, so a native run
-needs root or `CAP_NET_BIND_SERVICE`. In a container Docker permits uid 65532 to
-bind 80 without the capability; Kubernetes/containerd needs it. Everything the
-server serves — UI, API, `/mcp`, and OTLP ingest — is on that port.
+needs root or `CAP_NET_BIND_SERVICE`. The Kubernetes Deployment runs as uid
+65532 and adds only `NET_BIND_SERVICE`. Everything the server serves — UI, API,
+`/mcp`, and OTLP ingest — is on that port.
 
 `cargo build` also works without a frontend build: `build.rs` writes a
 placeholder `web/dist/index.html`, so the API, OTLP receiver and `/mcp` still

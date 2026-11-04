@@ -11,5 +11,4 @@ readme.md
 license
 changelog.md
 dockerfile
-docker-compose.yml
 .dockerignore

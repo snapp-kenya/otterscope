@@ -18,7 +18,18 @@ Model-pricing table (maintained, overridable) → per-call/per-run cost; filter/
 Assertions (contains/regex/JSON-schema/latency/cost thresholds) and LLM-as-judge scoring over captured runs; score storage on the run; comparison view (this week vs last, version A vs B). Exit criterion: "did my prompt change make things worse?" answerable in-product.
 
 ## M5 — Ship it (Sep 14 – Sep 28)
-Deployment is the container image and nothing else: `docker build -t otterscope .` from the repository root, pushed by the deploying team to their own registry. **The release-channel work in this milestone is dropped by operator decision** — there is no release pipeline, no archives, no checksums or signing, no GitHub Releases and no GHCR image, and no package-manager channel; see [ADR-0004](adr/0004-release-channels.md). Remaining M5 work: install docs, demo instance with sample data, readme polish with screenshots/GIF, docs for each supported framework. There is no CI; the gate is documented in [`development.md`](development.md) and deployment in [`deploy/readme.md`](../deploy/readme.md). Launch: Show HN + r/selfhosted + awesome-selfhosted PR.
+Deployment is Kubernetes via k3d on the operator's MacBook Pro, driven by
+[`deploy/k8s/deploy.sh`](../deploy/k8s/deploy.sh): the image is built from the
+working tree, tagged with the short git SHA, imported into the local cluster and
+applied. **The release-channel work in this milestone is dropped by operator
+decision** — there is no release pipeline, no archives, no checksums or signing,
+no GitHub Releases, no hosted image and no package-manager channel; see
+[ADR-0004](adr/0004-release-channels.md) and
+[ADR-0009](adr/0009-kubernetes-k3d-deployment.md). Remaining M5 work: install
+docs, demo instance with sample data, readme polish with screenshots/GIF, docs
+for each supported framework. There is no CI; the gate is documented in
+[`development.md`](development.md) and deployment in
+[`deploy/readme.md`](../deploy/readme.md).
 
 ## Later / explicitly deferred
 - DuckDB/Parquet analytics sidecar for large volumes (ADR-0002 keeps SQLite until proven insufficient)

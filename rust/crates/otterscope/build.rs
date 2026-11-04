@@ -12,4 +12,15 @@ fn main() {
         .expect("write placeholder");
     }
     println!("cargo:rerun-if-changed={}", dist.display());
+
+    // The container build passes the git SHA as `--build-arg version`, which
+    // the dockerfile exports as OTTERSCOPE_VERSION. A plain cargo build leaves
+    // it unset and the crate version is reported instead.
+    println!("cargo:rerun-if-env-changed=OTTERSCOPE_VERSION");
+    if let Ok(version) = std::env::var("OTTERSCOPE_VERSION") {
+        let version = version.trim();
+        if !version.is_empty() {
+            println!("cargo:rustc-env=OTTERSCOPE_VERSION={version}");
+        }
+    }
 }

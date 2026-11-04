@@ -19,4 +19,11 @@ pub mod server;
 pub mod store;
 
 /// Version reported by `otterscope version` and the API.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+///
+/// The container build sets `OTTERSCOPE_VERSION` from `--build-arg version`
+/// (the short git SHA in deploy/k8s/deploy.sh); a plain cargo build reports
+/// the crate version from `Cargo.toml`.
+pub const VERSION: &str = match option_env!("OTTERSCOPE_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};

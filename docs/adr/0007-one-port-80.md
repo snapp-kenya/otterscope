@@ -1,6 +1,12 @@
 # ADR-0007: One HTTP listener on port 80
 
-Date: 2026-11-04 · Status: accepted · Supersedes: the listener/port decision in ADR-0002
+Date: 2026-11-04 · Status: accepted · Amended by ADR-0009 · Supersedes: the listener/port decision in ADR-0002
+
+> Amendment note (ADR-0009): the deployment target is now Kubernetes via k3d on
+> the operator's Mac, not Istio. The single-listener-on-80 decision below is
+> unchanged; every mention of compose, `docker run`, Istio or "the platform"
+> describes the options available at the time, while the supported path today is
+> the k3d Service and a port-forward.
 
 ## Context
 

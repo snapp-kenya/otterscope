@@ -12,7 +12,10 @@
 #      arg is root-only; a prefixed deployment requires the matching build arg
 #      because the UI bundle bakes its API and router base into the JavaScript
 #      at build time:
-#          docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
+#          sha=$(git rev-parse --short HEAD)
+#          docker build --build-arg version="$sha" \
+#            --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t "otterscope:$sha" .
+#          k3d image import "otterscope:$sha" -c otterscope
 #      A root-built image serves the HTML but its JS calls /api, which
 #      is outside this Ingress path. If the baked base and OTTERSCOPE_BASE_PATH
 #      disagree the server starts with a prominent WARN and the UI will not

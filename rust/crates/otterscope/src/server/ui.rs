@@ -149,9 +149,9 @@ const PLACEHOLDER: &str = r#"<!doctype html>
   <p>The server is running &mdash; this binary was just built without the embedded web UI.</p>
   <p>The OTLP receiver and the API work normally: point your agent at the OTLP
      endpoint and query <code>/api/runs</code> or <code>/mcp</code>.</p>
-  <p>To get the UI, install a <a href="https://github.com/otterscope/otterscope/releases">release binary</a>
-     or the Docker image, or build the frontend first:
-     <code>cd web &amp;&amp; npm run build</code> then rebuild.</p>
+  <p>To get the UI, deploy the k3d cluster with
+     <code>deploy/k8s/deploy.sh</code>, or build the frontend first:
+     <code>cd web &amp;&amp; bun run build</code> then rebuild the binary.</p>
 </main>"#;
 
 #[cfg(test)]

@@ -101,18 +101,21 @@ procedure for a change is [`workflow.md`](workflow.md).
   `bun run lint`, `bun test`, `bun run build` in `web/`.
 - Run locally: `cd rust && cargo run -- serve` (or
   `./target/release/otterscope serve`). The process always binds port 80, so it
-  needs root, `CAP_NET_BIND_SERVICE` on Linux, or the container; UI, API, `/mcp`
-  and OTLP ingest (`POST /v1/traces`) all share that one port.
+  needs root or `CAP_NET_BIND_SERVICE`; UI, API, `/mcp` and OTLP ingest
+  (`POST /v1/traces`) all share that one port. The supported way to run the
+  whole deployment is k3d: [`deploy/k8s/deploy.sh`](../deploy/k8s/deploy.sh);
+  see [`deploy/readme.md`](../deploy/readme.md).
 - Readme screenshots are generated, not hand-taken: seed a db
-  (`cargo run -- sample`), serve it on the fixed port 80 (a container published
-  as `-p 8080:80` is the easy way; there is no `-listen` knob), then
-  `cd web && OTERSCOPE_URL=http://localhost:8080 bun run screenshots`. The script
-  defaults to `http://localhost:8324`, so pass `OTERSCOPE_URL` unless the server
-  is on host port 80. That script is the only consumer of the `playwright`
-  devDependency — it was once deleted as "unused" (#124), so keep the script and
-  the dependency together. The version comes from `Cargo.toml`
-  (`CARGO_PKG_VERSION`), so bump the workspace version before regenerating
-  release screenshots.
+  (`cargo run -- sample`), serve it (the k3d port-forward on 8080 is the easy
+  way; there is no `-listen` knob), then
+  `cd web && OTTERSCOPE_URL=http://localhost:8080 bun run screenshots`. The
+  script defaults to `http://localhost:8324`, so pass `OTTERSCOPE_URL` unless
+  the server is on that port. That script is the only consumer of the
+  `playwright` devDependency — it was once deleted as "unused" (#124), so keep
+  the script and the dependency together. `otterscope version` reports
+  `OTTERSCOPE_VERSION` when set (the image build passes the git SHA as
+  `--build-arg version`) and `CARGO_PKG_VERSION` otherwise, so bump the
+  workspace version before regenerating screenshots from a plain cargo build.
 - Test fixtures for ingest live in `rust/crates/otterscope/testdata/` as captured
   OTLP JSON/protobuf payloads from real frameworks — extend these whenever a new
   framework/dialect quirk is found.
@@ -132,9 +135,11 @@ procedure for a change is [`workflow.md`](workflow.md).
   ```
 
   Do not merge if any of the six fails. A flaky failure is still a failure:
-  re-run the command, then debug; there is no job to re-run. Deployment is the
-  container image: build it with `docker build` from the repository root. There
-  is no packaging or release pipeline.
+  re-run the command, then debug; there is no job to re-run. Deployment is
+  Kubernetes via k3d: `deploy/k8s/deploy.sh` builds the image from the current
+  commit, tags it with the short git SHA, imports it into the local cluster and
+  applies the manifests. Nothing is pushed anywhere, and there is no packaging
+  or release pipeline ([ADR-0009](adr/0009-kubernetes-k3d-deployment.md)).
 
 ## Workflow
 

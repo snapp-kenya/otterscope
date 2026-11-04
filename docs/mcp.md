@@ -10,10 +10,10 @@ The endpoint is **`POST /mcp`** on the server's single listener: the same port
 transport. It's read-only. Under `-base-path /otterscope` the endpoint is
 `/otterscope/mcp`, like every other route.
 
-Examples below use `http://localhost:8080`, the host mapping in
-[docker-compose.yml](../docker-compose.yml); substitute the host and port your
-deployment publishes (a host binary or `-p 80:80` uses plain port 80, so
-`http://localhost/mcp`).
+Examples below use `http://localhost:8080`, the local port-forward from
+[deploy/readme.md](../deploy/readme.md). Substitute the port-forward you use:
+inside the cluster the endpoint is plain port 80, e.g.
+`http://otterscope.otterscope.svc.cluster.local/mcp`.
 
 With `-read-auth` on, `/mcp` requires the same Bearer token as the API; read
 scope is enough. Pass it as an `Authorization: Bearer <token>` header from

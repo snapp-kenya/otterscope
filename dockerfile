@@ -30,8 +30,10 @@ copy rust/crates/otterscope ./crates/otterscope
 copy --from=web /src/web/dist /src/web/dist
 
 arg version
-run if [ -n "$version" ]; then sed -i -E "s/^version = \"[^\"]+\"/version = \"$version\"/" Cargo.toml; fi \
- && touch crates/otterscope/src/main.rs crates/otterscope/src/lib.rs \
+# deploy/k8s/deploy.sh passes the short git SHA as --build-arg version, so the
+# binary reports that commit from `otterscope version`, /healthz and /metrics.
+env OTTERSCOPE_VERSION="$version"
+run touch crates/otterscope/src/main.rs crates/otterscope/src/lib.rs \
  && cargo build --release \
  && mkdir -p /data \
  && chown 65532:65532 /data
@@ -46,10 +48,10 @@ env TMPDIR=/data \
 workdir /data
 volume ["/data"]
 user 65532:65532
-# The server always listens on port 80. Docker lets uid 65532 bind it without
-# extra capabilities (it sets net.ipv4.ip_unprivileged_port_start=0);
-# Kubernetes/containerd keeps 1024 privileged and needs NET_BIND_SERVICE:
-#   docker run --cap-drop ALL --cap-add NET_BIND_SERVICE -p 8080:80 ...
+# The server always listens on port 80. Kubernetes/containerd keeps 1024
+# privileged and needs NET_BIND_SERVICE, which deploy/k8s/deployment.yaml adds
+# and nothing else keeps. deploy/k8s/deploy.sh builds this image and imports it
+# into the local k3d cluster; it is never pushed anywhere.
 expose 80
 entrypoint ["/usr/local/bin/otterscope"]
 cmd ["serve", "-db", "/data/otterscope.db"]

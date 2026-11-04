@@ -59,6 +59,12 @@ commit history has the rest.
 
 ### Changed
 
+- Deployment is Kubernetes via k3d only. `deploy/k8s/deploy.sh` builds the
+  image from the current commit, tags it with the short git SHA, imports it
+  into the local cluster and applies the manifests. The SHA is passed as
+  `--build-arg version` and is what `otterscope version` and `/healthz`
+  report. No image is pushed anywhere; see
+  [ADR-0009](docs/adr/0009-kubernetes-k3d-deployment.md).
 - Documentation and the container build file are renamed to lowercase:
   `readme.md`, `changelog.md`, `license`, `deploy/readme.md`,
   `docs/frameworks/readme.md`, `docs/roadmap.md`, `docs/workflow.md` and
@@ -79,7 +85,8 @@ commit history has the rest.
   checksums, no signing, no GitHub Releases, no GHCR image and no
   package-manager distribution (ADR-0004 amendment,
   [docs/adr/0004-release-channels.md](docs/adr/0004-release-channels.md)).
-  Deployment is that image pushed to your own registry.
+  Deployment is that image, built locally and imported into the k3d cluster
+  (ADR-0009).
 - The web UI is rebuilt on Bun + React 19 + TanStack Router/Query + Tailwind +
   shadcn-style components. `bun test` replaces vitest, `bun run lint` keeps
   oxlint, and `bun run build` produces the `web/dist` the server embeds.
@@ -94,30 +101,36 @@ commit history has the rest.
   longer hands out working credentials. The `read_tokens` table became
   `tokens` because it also holds admin-scope tokens.
 - The container image runs as uid 65532 on a distroless base with `/data` as
-  the only writable path, and keeps the binary's loopback defaults.
-  `docker-compose.yml` publishes both ports on `127.0.0.1` and enables read
-  authentication.
+  the only writable path, and keeps the binary's loopback defaults. It is built
+  and imported into the local k3d cluster by `deploy/k8s/deploy.sh`.
 
 ### Removed
 
+- `docker-compose.yml` is deleted. k3d is the only deployment target; the
+  readme quick start, deploy docs and MCP examples use `deploy.sh` and a
+  port-forward instead.
+- `docs/launch/` is deleted: the Show HN, awesome-selfhosted,
+  digitalocean-community and r/selfhosted drafts described a public product
+  launch that is not this deployment.
+- Registry and push instructions are removed from the manifests and docs. The
+  Deployment and CronJob use the `otterscope:dev` placeholder that `deploy.sh`
+  replaces with the git SHA, and `imagePullPolicy: IfNotPresent`.
 - The `.github/` directory is removed entirely: no GitHub Actions workflows and
   no issue templates. No CI service replaces it — the six quality gates are run
-  locally before merge. There is no release pipeline either: the only artifact
-  is the container image built from `dockerfile` and pushed by the deploying
-  team to their own registry. The gate itself is documented in
-  [docs/development.md](docs/development.md).
+  locally before merge. There is no release pipeline either: deployment is the
+  locally built image imported into the k3d cluster (ADR-0009). The gate itself
+  is documented in [docs/development.md](docs/development.md).
 - `docs/packaging.md` and `scripts/release.sh` are deleted. With no archives to
   build, the archive script and the packaging document had no consumer, and
   `scripts/` is gone with them.
 - Release channels are withdrawn by operator decision (2026-11-04, ADR-0004
   amendment): no archives, checksums, signing, GitHub Releases, GHCR image or
-  package-manager distribution. The only artifact is the container image built
-  from the repository's `dockerfile` and pushed to your own registry; deployment
-  is described in [deploy/readme.md](deploy/readme.md).
+  package-manager distribution. The only artifact is the container image, built
+  locally and imported into the k3d cluster; nothing is pushed. Deployment is
+  described in [deploy/readme.md](deploy/readme.md).
 - `CLAUDE.md` is replaced by [docs/development.md](docs/development.md), which
   keeps the architecture map, the hard rules, the development commands and the
   no-CI gate, written without vendor-specific tooling references.
-- The frozen Go implementation (`cmd/`, `internal/`, `go.mod`, `go.sum`,
 - The frozen Go implementation (`cmd/`, `internal/`, `go.mod`, `go.sum`,
   `web/embed.go`) is deleted; the Rust workspace is now the only implementation.
   The Go-era SQLite schema was replaced by the baseline described under

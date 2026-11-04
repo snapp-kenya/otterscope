@@ -1,7 +1,9 @@
 # Plain YAML + kustomize. No Helm, no chart, no templating.
 #
-# Apply the whole unit with:
-#   kubectl apply -k deploy/k8s
+# Deploy with deploy/k8s/deploy.sh: it renders this kustomization, replaces the
+# otterscope:dev placeholder with the git SHA and applies the result. Applying
+# `kubectl apply -k deploy/k8s` directly would leave the placeholder tag, which
+# no cluster can pull.
 #
 # The Ingress is optional and not listed here on purpose; read ingress.yaml
 # before enabling it (a base path also requires a UI build arg and probe-path

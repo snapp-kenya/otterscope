@@ -48,20 +48,22 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
 - Every 4th milestone-week includes a debt-repayment pass: pick the top tracked debt items and clear them before new features.
 - The ingest normalization layer is expected churn (upstream OTel GenAI conventions are unstable) — quirks go in `rust/crates/otterscope/src/ingest` with fixtures, never patched downstream.
 
-## Releases
+## Deployment and versions
 
-There is no release process beyond building the image. The container image built
-from the repository's `dockerfile` is the only artifact this project produces:
-`docker build -t otterscope .` from the repository root. The deploying team
-pushes it to **their own** registry; nothing is published here — no archives, no
-checksums, no signatures, no GitHub Releases, no GHCR image and no
-package-manager distribution. See
-[ADR-0004](adr/0004-release-channels.md) and
+There is no release process. Deployment is Kubernetes via k3d on the operator's
+Mac: [`deploy/k8s/deploy.sh`](../deploy/k8s/deploy.sh) builds the image from the
+current commit, tags it with the short git SHA (never a moving tag), imports it
+into the local cluster and applies the manifests. Nothing is published or
+pushed; there are no archives, checksums, signatures, GitHub Releases or
+package-manager channels. See [ADR-0004](adr/0004-release-channels.md),
+[ADR-0009](adr/0009-kubernetes-k3d-deployment.md) and
 [deploy/readme.md](../deploy/readme.md).
 
 The branch and merge discipline above is unchanged by this: one branch per
 change, squash-merge to the shipping branch, never merge on a red gate. The
-version lives in `[workspace.package]` in `rust/Cargo.toml` (`otterscope
-version` reports it) and notable changes go in `changelog.md`; pre-1.0,
-minor = features, patch = fixes. Breaking config/API changes need a migration
-note in the changelog; a JSON contract change links to `docs/api-rust.md`.
+version lives in `[workspace.package]` in `rust/Cargo.toml`; a plain cargo build
+reports it (`otterscope version`), while the image build overrides the reported
+version with the git SHA via `--build-arg version`. Notable changes go in
+`changelog.md`; pre-1.0, minor = features, patch = fixes. Breaking config/API
+changes need a migration note in the changelog; a JSON contract change links to
+`docs/api-rust.md`.
