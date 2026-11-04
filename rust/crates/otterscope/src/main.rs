@@ -8,6 +8,8 @@ use std::process::ExitCode;
 
 use otterscope::{args, config, server, store};
 
+mod cli;
+
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -30,9 +32,10 @@ fn main() -> ExitCode {
             Ok(())
         }
         "sample" => sample(rest),
-        "renormalize" | "backup" | "token" | "project" => {
-            Err(anyhow::anyhow!("{command} is not ported yet"))
-        }
+        "renormalize" => cli::renormalize(rest),
+        "backup" => cli::backup(rest),
+        "token" => cli::token(rest),
+        "project" => cli::project(rest),
         other => {
             eprintln!("unknown command {other:?}");
             usage();
@@ -50,14 +53,8 @@ fn main() -> ExitCode {
 }
 
 fn sample(argv: &[String]) -> anyhow::Result<()> {
+    let (cfg, _) = cli::load_config(argv)?;
     let parsed = args::parse(argv, &[]).map_err(anyhow::Error::msg)?;
-    let config_path = parsed
-        .get("config")
-        .map(str::to_string)
-        .or_else(|| std::env::var("OTTERSCOPE_CONFIG").ok())
-        .unwrap_or_default();
-    let cfg = config::Config::load(&config_path, |k| std::env::var(k).ok())
-        .map_err(anyhow::Error::msg)?;
     let db = parsed.string("db", &cfg.db);
     let runs = parsed.int("runs", 60).map_err(anyhow::Error::msg)?;
 
@@ -90,16 +87,11 @@ commands:
 }
 
 fn serve(argv: &[String]) -> anyhow::Result<()> {
+    // Resolve defaults from a config file (-config or OTTERSCOPE_CONFIG) and
+    // OTTERSCOPE_* env vars; explicit flags below then override them, giving
+    // precedence flags > env > file > built-in defaults.
+    let (mut cfg, _) = cli::load_config(argv)?;
     let parsed = args::parse(argv, &["read-auth"]).map_err(anyhow::Error::msg)?;
-    let config_path = parsed
-        .get("config")
-        .map(str::to_string)
-        .or_else(|| std::env::var("OTTERSCOPE_CONFIG").ok())
-        .unwrap_or_default();
-
-    let mut cfg = config::Config::load(&config_path, |k| std::env::var(k).ok())
-        .map_err(anyhow::Error::msg)?;
-
     if parsed.get("listen").is_some() {
         cfg.listen = parsed.string("listen", &cfg.listen);
     }
@@ -206,6 +198,19 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
             "listening"
         );
 
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            let _ = shutdown_tx.send(true);
+        });
+
+        let mut retention = None;
+        if cfg.retention > std::time::Duration::ZERO {
+            let handle = spawn_retention_sweep(store.clone(), cfg.retention, shutdown_rx.clone());
+            tracing::info!(keep = ?cfg.retention, "retention sweep enabled");
+            retention = Some(handle);
+        }
+
         let mut watcher = if cfg.alert_interval > std::time::Duration::ZERO {
             let mut watcher = otterscope::alerts::Watcher::new(store.clone(), cfg.alert_interval)?;
             watcher.start();
@@ -214,11 +219,6 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
             None
         };
 
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            let _ = shutdown_tx.send(true);
-        });
         let mut ui_shutdown = shutdown_rx.clone();
         let mut otlp_shutdown = shutdown_rx;
         tokio::try_join!(
@@ -230,6 +230,9 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
             }),
         )?;
 
+        if let Some(retention) = retention {
+            let _ = retention.await;
+        }
         evaluator.stop().await;
         if let Some(watcher) = watcher.as_mut() {
             watcher.stop().await;
@@ -237,4 +240,32 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
         Ok::<(), anyhow::Error>(())
     })?;
     Ok(())
+}
+
+/// Delete runs older than `keep` hourly, sweeping once immediately.
+fn spawn_retention_sweep(
+    store: std::sync::Arc<store::Store>,
+    keep: std::time::Duration,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        // A retention beyond chrono's range just keeps everything forever;
+        // clamping avoids an overflow panic when the cutoff is computed.
+        let keep =
+            chrono::Duration::from_std(keep).unwrap_or_else(|_| chrono::Duration::days(36_500));
+        loop {
+            let cutoff = chrono::Utc::now() - keep;
+            let sweep_store = store.clone();
+            match tokio::task::spawn_blocking(move || sweep_store.sweep(cutoff)).await {
+                Ok(Ok(0)) => {}
+                Ok(Ok(deleted)) => tracing::info!(runs_deleted = deleted, "retention sweep"),
+                Ok(Err(err)) => tracing::error!(error = %err, "retention sweep failed"),
+                Err(err) => tracing::error!(error = %err, "retention sweep failed"),
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(3600)) => {}
+                _ = shutdown.changed() => return,
+            }
+        }
+    })
 }

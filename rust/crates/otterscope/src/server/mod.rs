@@ -41,7 +41,7 @@ pub use backend::{
     EvaluateOptions, EvaluateReport, NewAlert, ShareRecord, TokenRecord, ViewRecord,
 };
 pub use evaluator::Evaluator;
-pub use sink::StoreSink;
+pub use sink::{StoreSink, price_steps};
 pub use stream::Hub;
 
 /// Default cap on one JSON request body. The API only ever reads small
