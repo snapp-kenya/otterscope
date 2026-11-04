@@ -191,10 +191,10 @@ to deploy. SQLite comes from C, and the Linux release binaries link glibc
 2.39+ (Docker is the portable option), so "single binary" is the promise —
 not "fully static".
 
-Databases are still plain SQLite and keep the same schema and append-only
-migrations, so an existing database opens without a conversion step. The two
-implementations no longer promise byte-compatible database files: back up
-before switching, and do not point the Go and Rust binaries at the same file.
+Databases are plain SQLite and keep the same schema and append-only
+migrations, so an existing database opens without a conversion step. There is
+no byte-for-byte compatibility promise across the port: back up before
+switching from an older build.
 
 Tests: `cd rust && cargo test` and `cd web && bun test`. Quality gates:
 `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D
@@ -205,9 +205,8 @@ architecture map and [docs/WORKFLOW.md](docs/WORKFLOW.md) for the contribution
 process.
 
 Contributions are welcome and there's nothing to sign — no CLA, no copyright
-assignment. GitHub Issues are disabled on this repository; the port is tracked
-by the draft PR that rewrites the backend in Rust, so start there or open a PR
-with a focused change.
+assignment. GitHub Issues are disabled on this repository; open a PR with a
+focused change.
 
 ## License
 

@@ -1,13 +1,13 @@
 # Otterscope — agent working guide
 
-Lightweight, self-hosted observability + evals for AI agents. One self-contained Rust binary, embedded SQLite, embedded web UI. Positioning: "Plausible for AI agents" — the anti-ClickHouse-stack. Read `docs/ROADMAP.md` for milestones and `docs/adr/` for decisions already made (do not relitigate them silently — write a new ADR to change one). ADR-0006 records the port from Go to Rust and the Bun/React UI; the Go tree under `cmd/` and `internal/` is kept only as the reference implementation while parity is finished.
+Lightweight, self-hosted observability + evals for AI agents. One self-contained Rust binary, embedded SQLite, embedded web UI. Positioning: "Plausible for AI agents" — the anti-ClickHouse-stack. Read `docs/ROADMAP.md` for milestones and `docs/adr/` for decisions already made (do not relitigate them silently — write a new ADR to change one). ADR-0006 records the port from Go to Rust and the Bun/React UI; the Rust workspace under `rust/` and the UI under `web/` are the only implementations.
 
 ## Architecture
 
 - `rust/crates/otterscope/src/main.rs` — CLI entrypoint (`serve`, `version`, `sample`, `token`, `project`, `backup`, `renormalize`).
 - `rust/crates/otterscope/src/cli.rs` — database subcommands and the config/flag plumbing they share with `serve`.
 - `rust/crates/otterscope/src/args.rs` — Go-`flag`-compatible parser: one or two dashes, `-name=value` or `-name value`, boolean flags, stop at the first operand.
-- `rust/crates/otterscope/src/config.rs` — effective `serve` config. Precedence is flags > `OTTERSCOPE_*` env > config file > defaults, with the same spellings as the Go build.
+- `rust/crates/otterscope/src/config.rs` — effective `serve` config. Precedence is flags > `OTTERSCOPE_*` env > config file > defaults, with the same spellings as the original Go build.
 - `rust/crates/otterscope/src/basepath.rs` — one mount prefix for the UI, API, `/mcp`, share links and OTLP receiver; requests outside it are 404, never another app's SPA.
 - `rust/crates/otterscope/src/model.rs` — the domain: Run, Step, LlmCall, ToolCall, Message, Status, StepKind. Everything downstream depends on this, not on OTel types.
 - `rust/crates/otterscope/src/ingest/` — OTLP/HTTP receiver (protobuf + JSON), per-key rate limiting, and GenAI-dialect normalization (OTel `gen_ai.*` old + experimental, OpenInference, Vercel AI SDK, Claude Agent SDK/Code). Normalization maps raw spans to `model`; this is the most churn-prone area, so quirks stay here behind the model boundary.
@@ -41,7 +41,7 @@ Lightweight, self-hosted observability + evals for AI agents. One self-contained
 - README screenshots are generated, not hand-taken: seed a db (`cargo run -- sample`), serve it on the fixed port 80 (a container published as `-p 8080:80` is the easy way; there is no `-listen` knob), then `cd web && OTERSCOPE_URL=http://localhost:8080 bun run screenshots`. The script defaults to `http://localhost:8324`, so pass `OTERSCOPE_URL` unless the server is on host port 80. That script is the only consumer of the `playwright` devDependency — it was once deleted as "unused" (#124), so keep the script and the dependency together. The version comes from `Cargo.toml` (`CARGO_PKG_VERSION`), so bump the workspace version before regenerating release screenshots.
 - Test fixtures for ingest live in `rust/crates/otterscope/testdata/` as captured OTLP JSON/protobuf payloads from real frameworks — extend these whenever a new framework/dialect quirk is found.
 - Any command whose exit code gates a decision (tests, builds, `gh pr checks`, `gh run watch`) must not be piped through `tail`/`grep`/etc. without `set -o pipefail` — a pipe masks the failure and the gate silently passes (this has bitten twice: PR #21 locally, PR #30 at merge). Bound any command that can hang so a stalled test fails fast.
-- CI check failures aren't always code failures — registry/proxy flakes happen (PR #30). Re-run the failed job (`gh run rerun <id> --failed`) before debugging, but never merge on a red check regardless of suspected cause. CI is `.github/workflows/rust.yml`; `.github/workflows/ci.yml` is manual and reference-only for the frozen Go tree.
+- CI check failures aren't always code failures — registry/proxy flakes happen (PR #30). Re-run the failed job (`gh run rerun <id> --failed`) before debugging, but never merge on a red check regardless of suspected cause. CI is `.github/workflows/rust.yml`; releases come from `.github/workflows/release.yml`.
 
 ## Workflow
 

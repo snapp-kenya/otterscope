@@ -83,6 +83,15 @@ commit history has the rest.
   `docker-compose.yml` publishes both ports on `127.0.0.1` and enables read
   authentication.
 
+### Removed
+
+- The frozen Go implementation (`cmd/`, `internal/`, `go.mod`, `go.sum`,
+  `web/embed.go`) and its manual reference-only workflow
+  (`.github/workflows/ci.yml`) are deleted; the Rust workspace is now the only
+  implementation. CI is `.github/workflows/rust.yml` and releases come from
+  `.github/workflows/release.yml`. Existing SQLite databases still open
+  without a conversion step.
+
 ### Fixed
 
 - A case collision in the frontend broke the production build on

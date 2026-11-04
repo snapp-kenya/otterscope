@@ -1,9 +1,8 @@
 # Packaging
 
-The Rust port ships from `.github/workflows/rust.yml` (CI) and
-`.github/workflows/release.yml` (tags). The Go pipeline is retired: the old
-`.goreleaser.yaml` is gone, and `.github/workflows/ci.yml` is a manual,
-reference-only workflow for the frozen Go tree.
+The Rust workspace ships from `.github/workflows/rust.yml` (CI) and
+`.github/workflows/release.yml` (tags). The old Go pipeline and its manual CI
+workflow were deleted with the Go tree; there is no second build system.
 
 ## Toolchain
 
@@ -34,13 +33,13 @@ no signing.
   target would need `cross` (or an equivalent sysroot setup), and that is not
   wired up yet. Do not advertise the Linux downloads as static until it is.
 - Only the four targets above are built. Darwin amd64, Windows arm64 and
-  signing are deferred; Homebrew, deb/rpm and the old `go install` channel
-  from ADR-0004 are not shipped (the Go installation path retired with the Go
-  module). Homebrew and distro packages can be added to the same matrix later
-  if demand justifies the packaging work.
+  signing are deferred; Homebrew and deb/rpm are not shipped. The Go-era
+  installation channel from ADR-0004 retired with the Go module and is not
+  coming back. Homebrew and distro packages can be added to the same matrix
+  later if demand justifies the packaging work.
 - The arm64 container is compiled under QEMU, so the first multi-arch build is
-  slow. It produces the same `linux/amd64,linux/arm64` manifest as the old Go
-  pipeline did.
+  slow. It produces the same `linux/amd64,linux/arm64` manifest as the retired
+  Go pipeline did.
 
 ## Container
 

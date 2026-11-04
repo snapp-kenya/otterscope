@@ -11,14 +11,12 @@ strained; they are history, not a current sizing guide.
 
 ## Running the old harness
 
-The original harness lives in `internal/store/bench_test.go` in the retained
-Go reference tree:
+The original harness lived in the Go tree's store benchmarks and was deleted
+with that tree. The Go-era numbers below are history and cannot be reproduced
+from this repository; "Refreshing them for the Rust build" below tracks the
+replacement.
 
-```sh
-go test -run=^$ -bench=. -benchmem ./internal/store/
-```
-
-`BenchmarkIngest` measures the write path (`UpsertSteps`: insert + run
+`BenchmarkIngest` measured the write path (`UpsertSteps`: insert + run
 re-derivation + FTS index). The query benchmarks (`ListRuns`, `GetStats`,
 `Search`) each seed a database of N runs (3 steps/run) and measure one query's
 latency at that size.

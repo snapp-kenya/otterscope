@@ -28,7 +28,7 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
    cd web && bun run lint && bun test && bun run build
    ```
 
-   CI runs the same gates in `.github/workflows/rust.yml` (fmt, clippy, cargo test, then bun lint/test/build). `.github/workflows/ci.yml` is a manual, reference-only workflow for the frozen Go tree and is not a pull-request gate.
+   CI runs the same gates in `.github/workflows/rust.yml` (fmt, clippy, cargo test, then bun lint/test/build); it is the only CI workflow.
 10. **Update the paper trail in the same PR**: ADR if an architectural decision was made, `docs/ROADMAP.md` if scope/timeline shifted, `CLAUDE.md` if the architecture map changed, README if user-facing behavior changed, `docs/api-rust.md` if the HTTP contract changed, and `CHANGELOG.md` under "Unreleased" for anything an operator or API client would notice.
 11. **PR → squash-merge** to the integration branch (or `main` once the port lands), with the tracked item linked in the description.
     - When GitHub Issues are re-enabled and a PR closes several of them, repeat the keyword: `Closes #12, Closes #13`. GitHub honours it only for the first number in a comma-separated list, so `Closes #12, #13` closes #12 and silently leaves #13 open — this stranded nine already-fixed issues after PRs #110 and #114.
