@@ -10,7 +10,7 @@ const normalizeBase = (raw: string | undefined) => {
 };
 
 const base = normalizeBase(process.env.OTTERSCOPE_BASE_PATH);
-const proxyTarget = "http://localhost:8317";
+const proxyTarget = "http://localhost:80";
 const mount = base.replace(/\/$/, "");
 
 const proxy = Object.fromEntries(

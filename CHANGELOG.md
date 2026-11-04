@@ -8,6 +8,15 @@ commit history has the rest.
 
 ### Breaking
 
+- The server now has **one HTTP listener, always on port 80**. The UI, JSON
+  API, `/mcp`, share links and OTLP ingest (`POST /v1/traces`) all live there;
+  there is no separate OTLP port. `-listen`, `-otlp`, `OTTERSCOPE_LISTEN`,
+  `OTTERSCOPE_OTLP` and the `listen`/`otlp` config-file keys are removed, and a
+  config file that still contains them fails to parse rather than silently
+  ignoring the value. Deployments that published 8317/4318 must publish port 80
+  instead; the host-side port is a deployment choice (`-p 8080:80`, Istio,
+  NodePort, …). Non-root container runs need `CAP_NET_BIND_SERVICE`.
+  TLS is not this service's job.
 - The HTTP JSON API is redesigned for the Rust server: `camelCase` fields,
   typed enums for run status, step kind and token scope, one
   `{"error": "…"}` envelope for every failure, and response arrays that are

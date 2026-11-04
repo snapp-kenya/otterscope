@@ -53,7 +53,22 @@ tags). It runs as uid/gid 65532, keeps `/data` as the only writable path
 `docker run <image> version` still works because the entrypoint is the binary
 and `serve` is the default command.
 
-`docker-compose.yml` keeps the deployment posture of the Go example: loopback
-publishing, read-only root filesystem, all capabilities dropped, named data
-volume, and read auth on. Mint the first read or admin token and a project
-ingest key with the `docker compose run` commands documented in that file.
+The image exposes exactly one port, **80**: the server's single listener for
+the UI, JSON API, `/mcp`, share links and OTLP ingest. The image stays non-root
+and never switches to root; binding 80 as uid 65532 therefore needs
+`CAP_NET_BIND_SERVICE`. Run it with `--cap-drop ALL --cap-add
+NET_BIND_SERVICE`, and choose the host-side mapping yourself (for example
+`-p 8080:80`; publishing is a platform decision, the process always listens on
+80 inside the container):
+
+```sh
+docker run --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
+  -p 127.0.0.1:8080:80 -v otterscope:/data \
+  ghcr.io/otterscope/otterscope serve -db /data/otterscope.db
+```
+
+`docker-compose.yml` uses the same posture: loopback publishing
+(`127.0.0.1:8080:80`), read-only root filesystem, all capabilities dropped
+except `NET_BIND_SERVICE`, named data volume, and read auth on. Mint the first
+read or admin token and a project ingest key with the `docker compose run`
+commands documented in that file.

@@ -84,7 +84,7 @@ impl AllowList {
         if self.origins.contains(&origin_key(scheme, host, port)) {
             return true;
         }
-        // Same page, same address: the UI on http://192.168.1.10:8317 calling
+        // Same page, same address: the UI on http://192.168.1.10:80 calling
         // its own API. An attacker's page is a different origin, and a host
         // reached by IP cannot be DNS-rebound.
         let request_host = hostname(request_host);

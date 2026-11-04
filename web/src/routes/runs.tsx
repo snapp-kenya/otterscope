@@ -3,6 +3,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { errorMessage } from "@/api";
 import { exportRunsCsv } from "@/lib/csv";
+import { BASE_PATH } from "@/lib/base";
 import {
   filtersFromSearch,
   hasActiveFilters,
@@ -33,6 +34,9 @@ export const RunsPage = () => {
   const filters = filtersFromSearch(search);
   const page = search.page ?? 0;
   const runsResult = useQuery(runsQuery(filters, page));
+  // The server's single listener is on this origin; keep the hint honest for
+  // whatever host and base path the deployment publishes.
+  const otlpEndpoint = `${window.location.origin}${BASE_PATH}`;
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const exportMutation = useMutation({
     mutationFn: () => exportRunsCsv(filters),
@@ -119,7 +123,7 @@ export const RunsPage = () => {
               Point your agent&apos;s OpenTelemetry exporter here:
               <br />
               <code className="mt-2 inline-block rounded-md bg-surface-raised px-2.5 py-1.5 text-[0.8rem]">
-                export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+                export OTEL_EXPORTER_OTLP_ENDPOINT={otlpEndpoint}
               </code>
             </p>
           )}

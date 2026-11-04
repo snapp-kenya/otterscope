@@ -51,15 +51,18 @@ If you ticked the Docker Marketplace image when creating the Droplet, or just
 
 ```sh
 docker run -d --restart unless-stopped --read-only \
-  -p 8317:8317 -p 4318:4318 \
+  --cap-drop ALL --cap-add NET_BIND_SERVICE \
+  -p 80:80 \
   -v otterscope:/data \
   ghcr.io/otterscope/otterscope \
-  serve -db /data/otterscope.db -listen 0.0.0.0:8317 -otlp 0.0.0.0:4318 \
-  -read-auth
+  serve -db /data/otterscope.db -read-auth
 ```
 
-The image is non-root (uid 65532, distroless base) and listens on loopback by
-default, so on a public host you pass `-listen`/`-otlp` yourself (as above).
+The server has **one listener, always on port 80** — UI, API, `/mcp` and OTLP
+ingest all share it. The image is non-root (uid 65532, distroless base), so
+binding 80 needs `CAP_NET_BIND_SERVICE` and nothing else; the container never
+runs as root. The host side of the mapping is your choice: `-p 80:80` (as
+above) or, say, `-p 8080:80` if something else already owns port 80.
 `-read-auth` makes the UI and API ask for a token; mint the first token and a
 per-agent ingest key against the same volume:
 
@@ -74,8 +77,10 @@ The token is shown only now (the database keeps its digest); the project key
 stays visible in `project list`. Add `-admin` to `token add` if that token
 should also create alerts, assertions or views.
 
-`8317` is the web UI, `4318` is the standard OTLP ingest port your agents send
-to. The `otterscope` volume keeps your data across restarts.
+Your browser and your agents both use that one published port; there is no
+separate OTLP port any more. Open `http://YOUR_DROPLET_IP` (or
+`http://YOUR_DROPLET_IP:8080` if you mapped that instead) once a token is
+minted. The `otterscope` volume keeps your data across restarts.
 
 ### Option B — the binary + systemd (leanest)
 
@@ -96,9 +101,11 @@ After=network.target
 
 [Service]
 User=otterscope
-# -listen/-otlp are set explicitly here because Otterscope binds to
-# localhost by default (see the security note below)
-ExecStart=/usr/local/bin/otterscope serve -db /var/lib/otterscope/otterscope.db -listen :8317 -otlp :4318 -read-auth
+# Port 80 is privileged and the server always binds it; grant the service the
+# one capability it needs instead of running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ExecStart=/usr/local/bin/otterscope serve -db /var/lib/otterscope/otterscope.db -read-auth
 Restart=on-failure
 
 [Install]
@@ -118,16 +125,17 @@ and views. With read auth on, agents need a project key too:
 
 ### One security note worth reading
 
-By default Otterscope binds to `127.0.0.1` — nothing is exposed to the
-internet until you decide to. On a Droplet you have two sane choices:
+The process always binds `0.0.0.0:80`, so "is it reachable?" is purely a
+firewall and publishing question. On a Droplet you have two sane choices:
 
-1. **Keep it private (my preference for a personal instance):** leave the
-   default localhost bind, and reach the UI over an SSH tunnel from your
-   laptop: `ssh -L 8317:localhost:8317 you@your-droplet`, then open
-   `http://localhost:8317`. Nothing is public, ever.
-2. **Expose it deliberately:** pass `-listen :8317 -otlp :4318` (as the unit
-   above does), and put a DigitalOcean **Cloud Firewall** in front so only
-   your app servers can reach `4318` and only you can reach `8317`. Run with
+1. **Keep it private (my preference for a personal instance):** publish the
+   container only to loopback (`-p 127.0.0.1:80:80`) and reach the UI over an
+   SSH tunnel from your laptop: `ssh -L 8080:localhost:80 you@your-droplet`,
+   then open `http://localhost:8080`. With the systemd unit, drop a firewall
+   rule that only admits your IP (or deny port 80 entirely and use the
+   tunnel). Nothing else on the internet can reach it.
+2. **Expose it deliberately:** publish port 80, and put a DigitalOcean
+   **Cloud Firewall** in front so only your app servers can reach it. Run with
    `-read-auth` and mint a token (above): Otterscope has token auth but no
    user accounts, so a token is the only thing standing between the internet
    and every trace you have. If you serve it on a hostname, also list that
@@ -139,7 +147,9 @@ Whatever framework you use — Pydantic AI, the OpenAI Agents SDK, LangGraph,
 the Vercel AI SDK — it's the standard OpenTelemetry variable:
 
 ```sh
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://YOUR_DROPLET_IP:4318
+# base URL only: OTLP/HTTP appends /v1/traces itself.
+# Use :8080 instead if that is how you published the container.
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://YOUR_DROPLET_IP
 export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <project-ingest-key>"
 ```
 

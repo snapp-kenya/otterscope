@@ -5,7 +5,7 @@ normalizes, including its `ai.*` wrapper/tool spans.
 
 ```sh
 npm install @vercel/otel   # or wire @opentelemetry/sdk-node yourself
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost
 ```
 
 ```ts

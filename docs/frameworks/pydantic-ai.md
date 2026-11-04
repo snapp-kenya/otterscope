@@ -5,7 +5,7 @@ package needed.
 
 ```sh
 pip install pydantic-ai opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost
 ```
 
 ```python
@@ -31,6 +31,7 @@ agent = Agent(
 result = agent.run_sync("Where is my order A-1042?")
 ```
 
-Run your agent, then open http://localhost:8317 — the run appears within a
-couple of seconds (BatchSpanProcessor flushes periodically; call
+Run your agent, then open the UI at the server's base URL (port 80; e.g.
+http://localhost:8080 if the container is published there) — the run appears
+within a couple of seconds (BatchSpanProcessor flushes periodically; call
 `provider.force_flush()` in short-lived scripts).

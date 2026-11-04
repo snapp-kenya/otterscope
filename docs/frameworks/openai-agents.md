@@ -6,7 +6,7 @@ normalizes natively.
 ```sh
 pip install openai-agents openinference-instrumentation-openai-agents \
     opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost
 ```
 
 ```python

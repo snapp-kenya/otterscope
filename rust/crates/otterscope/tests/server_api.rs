@@ -9,6 +9,7 @@ use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Request, StatusCode, header};
 use chrono::{TimeZone, Utc};
 use otterscope::evals::Assertion;
+use otterscope::ingest::{IngestResult, Sink};
 use otterscope::model::{Status, Step, StepKind};
 use otterscope::server::{self, AppState, Hub, Options};
 use otterscope::store::{Scope, Store};
@@ -29,7 +30,36 @@ fn temp_db() -> (PathBuf, Store) {
 }
 
 fn app(store: Arc<Store>, options: Options) -> Router {
-    server::router_with(AppState { store }, options, Hub::new())
+    server::router_with(AppState { store }, options, Hub::new(), Router::new())
+}
+
+/// A sink that persists straight to the real store, so an OTLP POST can be
+/// observed through `/api/runs`.
+struct StoreTestSink {
+    store: Arc<Store>,
+}
+
+impl Sink for StoreTestSink {
+    fn consume(&self, project: &str, raw: &[u8], steps: &[Step]) -> anyhow::Result<IngestResult> {
+        let rejected = self.store.ingest_batch(project, raw, steps)?;
+        Ok(IngestResult::with_rejections(rejected as i64))
+    }
+}
+
+/// The exact wiring `serve` uses: one app, with the OTLP receiver mounted at
+/// the root because the server's edge strips the base path once.
+fn app_with_ingest(store: Arc<Store>, options: Options) -> Router {
+    let ingest = otterscope::ingest::router(
+        otterscope::ingest::Options {
+            base_path: String::new(),
+            ..Default::default()
+        },
+        Arc::new(StoreTestSink {
+            store: store.clone(),
+        }),
+        Arc::new(|key: &str| key.is_empty().then(|| "default".to_string())),
+    );
+    server::router_with(AppState { store }, options, Hub::new(), ingest)
 }
 
 fn request(method: &str, uri: &str, body: Option<&str>) -> Request<Body> {
@@ -44,6 +74,20 @@ fn request(method: &str, uri: &str, body: Option<&str>) -> Request<Body> {
     }
     builder
         .body(Body::from(body.unwrap_or("").to_string()))
+        .expect("request")
+}
+
+fn otlp_request(uri: &str) -> Request<Body> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/pydantic_ai_chat.json");
+    let body = std::fs::read(&path)
+        .unwrap_or_else(|error| panic!("read fixture {}: {error}", path.display()));
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::HOST, "localhost:8080")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, body.len().to_string())
+        .body(Body::from(body))
         .expect("request")
 }
 
@@ -74,6 +118,57 @@ async fn send_with_token(
     );
     let (status, _, body) = send(app, request).await;
     (status, body)
+}
+
+#[tokio::test]
+async fn otlp_ingest_and_api_are_served_by_one_app() {
+    // The same Router value answers an OTLP POST and the JSON API — there is no
+    // second listener. Run it at the root and under a base path; the receiver
+    // is passed an empty base path because the edge strips the prefix once.
+    for base in ["", "/otterscope"] {
+        let (dir, store) = temp_db();
+        let store = Arc::new(store);
+        let app = app_with_ingest(
+            store.clone(),
+            Options {
+                base_path: base.to_string(),
+                ..Options::default()
+            },
+        );
+
+        let (status, _, body) = send(&app, otlp_request(&format!("{base}/v1/traces"))).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "base {base:?}: {}",
+            String::from_utf8_lossy(&body)
+        );
+
+        let (status, runs) =
+            send_json(&app, request("GET", &format!("{base}/api/runs"), None)).await;
+        assert_eq!(status, StatusCode::OK, "base {base:?}");
+        let runs = runs["runs"].as_array().expect("runs");
+        assert_eq!(runs.len(), 1, "base {base:?}: the OTLP run is visible");
+        let id = runs[0]["id"].as_str().expect("run id").to_string();
+
+        let (status, detail) =
+            send_json(&app, request("GET", &format!("{base}/api/runs/{id}"), None)).await;
+        assert_eq!(status, StatusCode::OK, "base {base:?}");
+        assert_eq!(
+            detail["steps"].as_array().map(Vec::len),
+            Some(3),
+            "base {base:?}"
+        );
+
+        if !base.is_empty() {
+            // Outside the prefix the endpoint is not served: no double mount.
+            let (status, _, _) = send(&app, otlp_request("/v1/traces")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "base {base:?}");
+        }
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[tokio::test]

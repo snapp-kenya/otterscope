@@ -1,11 +1,15 @@
 //! HTTP API, auth guard, metrics and the embedded UI (port of `internal/server`).
 //!
-//! One listener serves three things: the JSON read/admin API, the Prometheus
-//! text endpoint, and the embedded frontend. The gates run in the order the Go
-//! server composes them: the mount prefix at the very edge, then bearer auth,
-//! then the browser guard, then routing.
+//! One listener serves everything: the JSON read/admin API, MCP, the Prometheus
+//! text endpoint, the embedded frontend, and the OTLP receiver at
+//! `/v1/traces`. The process always listens on [`PORT`]; how that is exposed is
+//! a deployment decision, not a setting. The gates run in the order the Go
+//! server composes them: the mount prefix at the very edge, then bearer auth
+//! for the UI/API, then the browser guard, then routing. OTLP keeps its own
+//! ingest-key auth and rate limits inside its handler.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
@@ -21,6 +25,18 @@ use tower::ServiceExt;
 use crate::basepath;
 use crate::config::Config;
 use crate::store::{Scope, Store};
+
+/// The one HTTP port. The UI, JSON API, `/mcp`, `/healthz`, share links and
+/// OTLP ingest all share it. There is no flag, environment variable or config
+/// key for it: deployments decide how port 80 is exposed (port mapping, Istio,
+/// a NodePort, a load balancer), never the application.
+pub const PORT: u16 = 80;
+
+/// The address `serve` binds. Tests drive the router directly or bind
+/// `127.0.0.1:0` instead of using this.
+pub fn listen_addr() -> SocketAddr {
+    SocketAddr::from(([0, 0, 0, 0], PORT))
+}
 
 pub(crate) mod api;
 mod backend;
@@ -97,22 +113,47 @@ impl Options {
     }
 }
 
-/// Build the production router over a shared store and a hub the ingest sink
-/// also broadcasts on.
+/// Build the production app over a shared store and a hub the ingest sink also
+/// broadcasts on. `ingest` is the OTLP receiver's router, mounted at the root
+/// of the same app: build it with an empty base path because [`build_with_ingest`]
+/// strips the configured prefix once at the edge.
 #[cfg(not(test))]
-pub fn router_with(state: AppState<Arc<Store>>, options: Options, hub: Hub) -> Router {
+pub fn router_with(
+    state: AppState<Arc<Store>>,
+    options: Options,
+    hub: Hub,
+    ingest: Router,
+) -> Router {
     let backend = backend_real::RealBackend::new(state.store, &options);
-    build_with_hub(Arc::new(backend), options, hub)
+    build_with_ingest(Arc::new(backend), options, hub, ingest)
 }
 
-/// Build the router over any backend. Used by `serve` and by the test suite,
-/// which substitutes an in-memory backend.
+/// Build the router over any backend. Used by the test suite, which substitutes
+/// an in-memory backend. It mounts no OTLP receiver; use [`build_with_ingest`]
+/// for the single-app wiring `serve` uses.
 pub fn build(backend: Arc<dyn ApiBackend>, options: Options) -> Router {
     build_with_hub(backend, options, Hub::new())
 }
 
 /// Build the router with a hub the ingest sink can broadcast on.
-pub fn build_with_hub(backend: Arc<dyn ApiBackend>, mut options: Options, hub: Hub) -> Router {
+pub fn build_with_hub(backend: Arc<dyn ApiBackend>, options: Options, hub: Hub) -> Router {
+    build_with_ingest(backend, options, hub, Router::new())
+}
+
+/// Build the one app: the UI/API/MCP routes plus the OTLP receiver.
+///
+/// The ingest router must be mounted at the root (an empty
+/// [`crate::ingest::Options::base_path`]) because this function strips the
+/// configured base path once, before either router sees the request. That is
+/// what makes `/otterscope/v1/traces` work without double mounting, and keeps
+/// OTLP's ingest-key auth and limits independent of the UI/API's read auth and
+/// browser guard.
+pub fn build_with_ingest(
+    backend: Arc<dyn ApiBackend>,
+    mut options: Options,
+    hub: Hub,
+    ingest: Router,
+) -> Router {
     if let Ok(normalized) = basepath::normalize(&options.base_path) {
         options.base_path = normalized;
     }
@@ -129,6 +170,7 @@ pub fn build_with_hub(backend: Arc<dyn ApiBackend>, mut options: Options, hub: H
         Some(mcp) => api.merge(mcp),
         None => api.route("/mcp", post(mcp_unavailable)),
     };
+    api = api.merge(ingest);
     let app = App { state, api };
     let base_path = app.state.options.base_path.clone();
     Router::new()
@@ -242,6 +284,8 @@ async fn dispatch(State(app): State<App>, mut req: Request<Body>) -> Response {
 
 /// `/healthz` stays open so a liveness probe needs no credential; so do public
 /// shares. `/metrics` is an inventory of the deployment and takes a read token.
+/// `/v1/traces` is OTLP: it authenticates its own ingest key inside the
+/// receiver, so it must not be gated by the UI/API's read token.
 fn auth_protected(path: &str) -> bool {
     if path == "/healthz" || path.starts_with("/api/shared/") {
         return false;
@@ -249,13 +293,15 @@ fn auth_protected(path: &str) -> bool {
     path.starts_with("/api/") || path == "/mcp" || path == "/metrics"
 }
 
-/// Paths that never reach the SPA: the API, MCP, metrics and the health check.
+/// Paths that never reach the SPA: the API, MCP, metrics, the health check and
+/// the OTLP receiver.
 fn is_ui_path(path: &str) -> bool {
     !(path == "/api"
         || path.starts_with("/api/")
         || path == "/mcp"
         || path == "/metrics"
-        || path == "/healthz")
+        || path == "/healthz"
+        || path == "/v1/traces")
 }
 
 fn presented_token(req: &Request<Body>, path: &str) -> Option<String> {

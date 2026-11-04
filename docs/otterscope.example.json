@@ -1,8 +1,6 @@
 {
   "db": "/data/otterscope.db",
-  "listen": ":8317",
   "basePath": "",
-  "otlp": ":4318",
   "retention": "2160h",
   "alertInterval": "1m",
   "readAuth": true,

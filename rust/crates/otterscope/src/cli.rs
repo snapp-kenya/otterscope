@@ -84,7 +84,7 @@ pub fn token(argv: &[String]) -> anyhow::Result<()> {
         println!();
         println!("use it as:");
         println!(
-            "  curl -H \"Authorization: Bearer {}\" http://localhost:8317/api/runs",
+            "  curl -H \"Authorization: Bearer {}\" http://localhost/api/runs",
             token.token
         );
         println!();

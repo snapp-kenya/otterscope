@@ -21,7 +21,7 @@ use super::backend::{
     EvaluateOptions, EvaluateReport, NewAlert, ShareRecord, StatsRecord, TokenRecord, ViewRecord,
 };
 use super::stream::Hub;
-use super::{Options, build};
+use super::{Options, build, build_with_ingest};
 use crate::evals::{Assertion, Result as EvalResult};
 use crate::model::{LlmCall, Message, Run, Status, Step, StepKind};
 use crate::store::{Filter, Metrics, Scope};
@@ -1584,15 +1584,15 @@ async fn lan_address_accepted() {
 
     let (status, _, body) = send(
         &app,
-        make_request_host(Method::GET, "/api/runs", None, "192.168.1.10:8317"),
+        make_request_host(Method::GET, "/api/runs", None, "192.168.1.10:8080"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{}", body_text(&body));
 
-    let mut request = make_request_host(Method::GET, "/api/runs", None, "192.168.1.10:8317");
+    let mut request = make_request_host(Method::GET, "/api/runs", None, "192.168.1.10:8080");
     request.headers_mut().insert(
         header::ORIGIN,
-        HeaderValue::from_static("http://192.168.1.10:8317"),
+        HeaderValue::from_static("http://192.168.1.10:8080"),
     );
     let (status, _, _) = send(&app, request).await;
     assert_eq!(status, StatusCode::OK);
@@ -1601,7 +1601,7 @@ async fn lan_address_accepted() {
         Method::POST,
         "/api/views",
         Some(r#"{"name":"x","params":{}}"#),
-        "192.168.1.10:8317",
+        "192.168.1.10:8080",
     );
     request.headers_mut().insert(
         header::ORIGIN,
@@ -1864,6 +1864,163 @@ async fn base_path_redirect_stays_inside_prefix() {
             .and_then(|value| value.to_str().ok()),
         Some(expected.as_str())
     );
+}
+
+// ------------------------------------------------- one app: UI/API + OTLP
+
+const INGEST_KEY: &str = "ingest-key";
+
+#[derive(Default)]
+struct RecordingSink {
+    seen: Mutex<Vec<(String, usize)>>,
+}
+
+impl crate::ingest::Sink for RecordingSink {
+    fn consume(
+        &self,
+        project: &str,
+        _raw: &[u8],
+        steps: &[Step],
+    ) -> anyhow::Result<crate::ingest::IngestResult> {
+        self.seen
+            .lock()
+            .expect("sink")
+            .push((project.to_string(), steps.len()));
+        Ok(crate::ingest::IngestResult::default())
+    }
+}
+
+/// The receiver `serve` mounts: root-relative, because the app's edge strips
+/// the base path once before routing.
+fn ingest_router(sink: Arc<RecordingSink>, require_key: bool) -> Router {
+    let resolve: crate::ingest::KeyResolver = Arc::new(|key: &str| match key {
+        "" => Some("default".to_string()),
+        INGEST_KEY => Some("prod".to_string()),
+        _ => None,
+    });
+    crate::ingest::router(
+        crate::ingest::Options {
+            base_path: String::new(),
+            require_key,
+            ..Default::default()
+        },
+        sink,
+        resolve,
+    )
+}
+
+fn otlp_fixture() -> String {
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/pydantic_ai_chat.json");
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read fixture {}: {error}", path.display()))
+}
+
+fn otlp_request(uri: &str, body: &str) -> Request<Body> {
+    request_parts(
+        Method::POST,
+        uri,
+        Some(body),
+        Some("application/json"),
+        "localhost:8080",
+    )
+}
+
+#[tokio::test]
+async fn ingest_and_api_are_served_by_one_app() {
+    let fake = Fake::new();
+    seed_run(&fake, "r1", 1000);
+    let sink = Arc::new(RecordingSink::default());
+    let app = build_with_ingest(
+        Arc::new(fake.clone()),
+        Options::default(),
+        Hub::new(),
+        ingest_router(sink.clone(), false),
+    );
+
+    let body = otlp_fixture();
+    let (status, headers, bytes) = send(&app, otlp_request("/v1/traces", &body)).await;
+    assert_eq!(status, StatusCode::OK, "{}", body_text(&bytes));
+    assert_eq!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("application/json")
+    );
+    assert_eq!(
+        sink.seen.lock().expect("sink").as_slice(),
+        &[("default".to_string(), 3)],
+        "OTLP reached the ingest sink"
+    );
+
+    // The very same Router value serves the JSON API; no second app/listener.
+    let (status, runs) = send_json(&app, make_request(Method::GET, "/api/runs", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(runs_of(&runs).len(), 1);
+}
+
+#[tokio::test]
+async fn base_path_prefixes_ingest_and_api_on_one_app() {
+    let fake = Fake::new();
+    seed_run(&fake, "r1", 1000);
+    let sink = Arc::new(RecordingSink::default());
+    let app = build_with_ingest(
+        Arc::new(fake.clone()),
+        base_options(),
+        Hub::new(),
+        ingest_router(sink.clone(), false),
+    );
+
+    let body = otlp_fixture();
+    let (status, _, bytes) = send(&app, otlp_request(&format!("{BASE}/v1/traces"), &body)).await;
+    assert_eq!(status, StatusCode::OK, "{}", body_text(&bytes));
+    assert_eq!(sink.seen.lock().expect("sink")[0].1, 3);
+
+    let (status, runs) = send_json(
+        &app,
+        make_request(Method::GET, &format!("{BASE}/api/runs"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(runs_of(&runs).len(), 1);
+
+    // Outside the prefix neither route exists, and OTLP never reaches the sink.
+    let (status, _, _) = send(&app, otlp_request("/v1/traces", &body)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(sink.seen.lock().expect("sink").len(), 1);
+}
+
+#[tokio::test]
+async fn ingest_keeps_its_own_auth_when_read_auth_is_on() {
+    let fake = Fake::new();
+    let sink = Arc::new(RecordingSink::default());
+    let app = build_with_ingest(
+        Arc::new(fake.clone()),
+        auth_options(),
+        Hub::new(),
+        ingest_router(sink.clone(), true),
+    );
+
+    let body = otlp_fixture();
+    // OTLP is not gated by the UI/API read token: it asks for its own ingest
+    // key inside the receiver.
+    let (status, _, bytes) = send(&app, otlp_request("/v1/traces", &body)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(body_text(&bytes).contains("ingest key required"));
+
+    // The UI/API still requires a read token.
+    let (status, _, _) = send(&app, make_request(Method::GET, "/api/runs", None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // A project ingest key authenticates OTLP even though no read token is sent.
+    let mut request = otlp_request("/v1/traces", &body);
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_static("Bearer ingest-key"),
+    );
+    let (status, _, _) = send(&app, request).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(sink.seen.lock().expect("sink")[0].0, "prod");
 }
 
 // ------------------------------------------------------------------ API

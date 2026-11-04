@@ -6,7 +6,7 @@ runnables and LangGraph nodes).
 ```sh
 pip install openinference-instrumentation-langchain \
     opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost
 ```
 
 ```python

@@ -5,9 +5,15 @@ server, so an agent — Claude Code, the MCP Inspector, anything that speaks
 MCP — can ask about its own runs: *"why did my last run fail?"*, *"what did
 that tool loop cost?"*, *"is my error rate up this hour?"*
 
-The endpoint is **`POST /mcp`** on the same port as the UI (`:8317`), using
-the Streamable HTTP transport. It's read-only. Under `-base-path /otterscope`
-the endpoint is `/otterscope/mcp`, like every other route.
+The endpoint is **`POST /mcp`** on the server's single listener: the same port
+80 that serves the UI, JSON API and OTLP ingest, using the Streamable HTTP
+transport. It's read-only. Under `-base-path /otterscope` the endpoint is
+`/otterscope/mcp`, like every other route.
+
+Examples below use `http://localhost:8080`, the host mapping in
+[docker-compose.yml](../docker-compose.yml); substitute the host and port your
+deployment publishes (a host binary or `-p 80:80` uses plain port 80, so
+`http://localhost/mcp`).
 
 With `-read-auth` on, `/mcp` requires the same Bearer token as the API; read
 scope is enough. Pass it as an `Authorization: Bearer <token>` header from
@@ -25,7 +31,7 @@ your MCP client (Claude Code takes `--header`).
 ## Connect Claude Code
 
 ```sh
-claude mcp add otterscope --transport http http://localhost:8317/mcp
+claude mcp add otterscope --transport http http://localhost:8080/mcp
 ```
 
 Then ask it things like *"use otterscope to show my last 5 runs and tell me
@@ -34,7 +40,7 @@ wrong."*
 
 ## Connect any MCP client
 
-Point it at `http://localhost:8317/mcp` with the Streamable HTTP transport
+Point it at `http://localhost:8080/mcp` with the Streamable HTTP transport
 (add the base path if the server is mounted under one). The server implements
 protocol revision `2026-07-28` only, the stateless revision: there is no
 `initialize` handshake and no `Mcp-Session-Id`. Clients send
@@ -49,6 +55,7 @@ With `-read-auth` off, the MCP endpoint has no auth — the same posture as the
 rest of the API. Turn it on before exposing the instance; `/mcp` then needs a
 read token and OTLP ingest needs a project key. The whole API, not just `/mcp`,
 checks `Origin` and `Host` on every request, so a malicious page cannot use
-your browser to read or write a local instance. Keep it on loopback (the
-default) or behind your own firewall/tunnel. It's read access to your trace
-data; treat it like the UI.
+your browser to read or write a local instance. The listener binds
+`0.0.0.0:80`, so it is reachable wherever the platform exposes that port:
+firewall it, keep it behind your ingress, or turn on `-read-auth`. It's read
+access to your trace data; treat it like the UI.

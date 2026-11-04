@@ -92,73 +92,11 @@ commands:
 }
 
 fn serve(argv: &[String]) -> anyhow::Result<()> {
-    // Resolve defaults from a config file (-config or OTTERSCOPE_CONFIG) and
-    // OTTERSCOPE_* env vars; explicit flags below then override them, giving
-    // precedence flags > env > file > built-in defaults.
-    let (mut cfg, _) = cli::load_config(argv)?;
-    let parsed = args::parse(
-        argv,
-        &[
-            "config",
-            "listen",
-            "otlp",
-            "db",
-            "pricing",
-            "judge-url",
-            "judge-models",
-            "retention",
-            "alert-interval",
-            "ingest-rate",
-            "ingest-burst",
-            "ingest-max-spans",
-            "ingest-max-trace-ids",
-            "base-path",
-        ],
-        &["read-auth"],
-    )?;
-    if parsed.get("listen").is_some() {
-        cfg.listen = parsed.string("listen", &cfg.listen);
-    }
-    if parsed.get("otlp").is_some() {
-        cfg.otlp = parsed.string("otlp", &cfg.otlp);
-    }
-    if parsed.get("db").is_some() {
-        cfg.db = parsed.string("db", &cfg.db);
-    }
-    if parsed.get("pricing").is_some() {
-        cfg.pricing = parsed.string("pricing", &cfg.pricing);
-    }
-    if parsed.get("judge-url").is_some() {
-        cfg.judge_url = parsed.string("judge-url", &cfg.judge_url);
-    }
-    if let Some(v) = parsed.get("judge-models") {
-        cfg.judge_models = config::parse_model_list(v);
-    }
-    if let Some(v) = parsed.get("retention") {
-        cfg.retention = config::parse_duration(v).map_err(anyhow::Error::msg)?;
-    }
-    if let Some(v) = parsed.get("alert-interval") {
-        cfg.alert_interval = config::parse_duration(v).map_err(anyhow::Error::msg)?;
-    }
-    cfg.read_auth = parsed
-        .bool("read-auth", cfg.read_auth)
-        .map_err(anyhow::Error::msg)?;
-    if let Some(v) = parsed.get("ingest-rate") {
-        cfg.ingest_rate = v.parse()?;
-    }
-    if let Some(v) = parsed.get("ingest-burst") {
-        cfg.ingest_burst = v.parse()?;
-    }
-    if let Some(v) = parsed.get("ingest-max-spans") {
-        cfg.max_spans_per_batch = v.parse()?;
-    }
-    if let Some(v) = parsed.get("ingest-max-trace-ids") {
-        cfg.max_trace_ids_per_batch = v.parse()?;
-    }
-    cfg.base_path = otterscope::basepath::normalize(&parsed.string("base-path", &cfg.base_path))
-        .map_err(anyhow::Error::msg)?;
+    // Flags > OTTERSCOPE_* env > config file > defaults. The single port is not
+    // part of this: the listener is always on 80.
+    let cfg = config::Config::serve(argv, |key| std::env::var(key).ok())?;
 
-    tracing::info!(db = %cfg.db, listen = %cfg.listen, otlp = %cfg.otlp, "starting");
+    tracing::info!(db = %cfg.db, "starting");
     let store = std::sync::Arc::new(store::Store::open(&cfg.db)?);
 
     let mut prices = otterscope::pricing::Table::default();
@@ -187,13 +125,6 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
             evaluator.clone(),
             hub.clone(),
         ));
-        let app = server::router_with(
-            server::AppState {
-                store: store.clone(),
-            },
-            options,
-            hub,
-        );
 
         let resolve_store = store.clone();
         let keyless_allowed = !cfg.read_auth;
@@ -204,8 +135,11 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
                 resolve_store.project_for_key(key)
             }
         });
+        // The edge strips the configured base path before either router sees
+        // the request, so the receiver itself is always mounted at the root:
+        // `/otterscope/v1/traces` works without double mounting.
         let otlp_options = otterscope::ingest::Options {
-            base_path: cfg.base_path.clone(),
+            base_path: String::new(),
             rate_per_sec: cfg.ingest_rate,
             burst: cfg.ingest_burst,
             require_key: cfg.read_auth,
@@ -214,12 +148,19 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
         };
         let otlp_app = otterscope::ingest::router(otlp_options, sink, resolve);
 
-        let ui_listener = tokio::net::TcpListener::bind(&cfg.listen).await?;
-        let otlp_listener = tokio::net::TcpListener::bind(&cfg.otlp).await?;
+        let app = server::router_with(
+            server::AppState {
+                store: store.clone(),
+            },
+            options,
+            hub,
+            otlp_app,
+        );
+
+        let listener = tokio::net::TcpListener::bind(server::listen_addr()).await?;
         tracing::info!(
-            ui = %ui_listener.local_addr()?,
-            otlp = %otlp_listener.local_addr()?,
-            "listening"
+            url = %format!("http://{}", listener.local_addr()?),
+            "listening for the UI, API, MCP and OTLP /v1/traces"
         );
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -243,16 +184,12 @@ fn serve(argv: &[String]) -> anyhow::Result<()> {
             None
         };
 
-        let mut ui_shutdown = shutdown_rx.clone();
-        let mut otlp_shutdown = shutdown_rx;
-        tokio::try_join!(
-            axum::serve(ui_listener, app).with_graceful_shutdown(async move {
-                let _ = ui_shutdown.changed().await;
-            }),
-            axum::serve(otlp_listener, otlp_app).with_graceful_shutdown(async move {
-                let _ = otlp_shutdown.changed().await;
-            }),
-        )?;
+        let mut shutdown = shutdown_rx;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown.changed().await;
+            })
+            .await?;
 
         if let Some(retention) = retention {
             let _ = retention.await;

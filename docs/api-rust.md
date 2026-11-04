@@ -8,8 +8,11 @@ envelope is:
 { "error": "message" }
 ```
 
-All routes live under the configured base path (for example `/otterscope`).
-Requests outside it get `404`; the SPA is only served for non-API paths.
+All routes live on the server's single listener on **port 80**; there is no
+separate OTLP port. OTLP ingest is `POST /v1/traces` on that same listener.
+Every route also lives under the configured base path (for example
+`/otterscope`), so ingest is `/otterscope/v1/traces` there. Requests outside the
+prefix get `404`; the SPA is only served for non-API paths.
 
 ## Auth and guard
 
@@ -18,6 +21,9 @@ Requests outside it get `404`; the SPA is only served for non-API paths.
   EventSource cannot set headers; every other protected route requires the
   header and answers `401` to a query token.
 - Public: `/healthz`, `/api/shared/{token}`, and the SPA.
+- OTLP is separate: `POST /v1/traces` takes a project ingest key, never a read
+  token, and has its own rate limits. It is not covered by the read-auth gate or
+  the `/api`-only browser guard.
 - Read token: every `GET`. Admin token: every mutating route (assertions, alerts,
   saved views, tokens, evaluate, share minting/revocation).
 - `401` for a missing/invalid token on a protected route; `403` when a read token
@@ -25,8 +31,9 @@ Requests outside it get `404`; the SPA is only served for non-API paths.
 - `Origin`/`Host` allow-list on `/api/*` and `/mcp`: loopback, IP literals, and
   hosts named in `OTTERSCOPE_ALLOWED_ORIGINS`. Foreign origins/hosts: `403`.
 - Writes with a body must declare `application/json`, else `415`.
-- Request bodies are capped at 1 MiB; a larger body is `413` with the JSON
-  envelope and `Cache-Control: no-store`.
+- Request bodies are capped at 1 MiB for the JSON API; a larger body is `413`
+  with the JSON envelope and `Cache-Control: no-store`. OTLP has its own 32 MiB
+  transport cap.
 - Every response — including `401`s, prefix misses and `413`s — carries
   `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and
   `Referrer-Policy: no-referrer`. JSON API responses, MCP responses and CSV
@@ -222,6 +229,29 @@ secret.
 ```json
 { "entries": [ { "at": "…", "action": "create", "entity": "view", "detail": "prod errors" } ] }
 ```
+
+## OTLP ingest
+
+`POST /v1/traces` — OTLP/HTTP traces, on the same listener and port as the UI
+and API. This is the one and only ingest endpoint; there is no separate OTLP
+port. It is prefix-aware like everything else (`/otterscope/v1/traces`).
+
+- Body: `application/x-protobuf` or `application/json`, optionally
+  `Content-Encoding: gzip`. Anything else is `415`.
+- Auth: `Authorization: Bearer <project-ingest-key>`. With `-read-auth` on, a
+  key is required and an unknown key is `401`; it is never a read token.
+- Limits: 32 MiB request body before decoding (`413`); 10,000 spans and 1,000
+  distinct trace ids per batch by default (`400` before normalization); per-key
+  token bucket of 50/s with burst 100 (`429`). Configure the batch and rate
+  limits with `-ingest-max-spans`, `-ingest-max-trace-ids`, `-ingest-rate` and
+  `-ingest-burst`.
+- `200` with an OTLP export response. Spans refused because their span id
+  belongs to another service are reported in `partialSuccess.rejectedSpans`,
+  not silently dropped.
+
+Point exporters at the base URL only (`http://<host>` or
+`http://<host>:<port>` if your platform maps a different host port); OTLP/HTTP
+appends `/v1/traces` itself.
 
 ## MCP
 

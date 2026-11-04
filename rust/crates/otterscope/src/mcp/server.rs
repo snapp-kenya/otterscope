@@ -1070,7 +1070,7 @@ mod tests {
 
         headers.insert(
             HeaderName::from_static("origin"),
-            HeaderValue::from_static("http://localhost:8317"),
+            HeaderValue::from_static("http://localhost:8080"),
         );
         let reply = post(&handler, &body, &headers).await;
         assert_eq!(reply.status, StatusCode::OK);

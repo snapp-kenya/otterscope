@@ -1,11 +1,17 @@
-# Minimal self-hosted deployment: UI on 127.0.0.1:8317, OTLP ingest on
-# 127.0.0.1:4318, data in a named volume, non-root, read-only root filesystem.
+# Minimal self-hosted deployment: one HTTP listener on port 80 serving the UI,
+# JSON API, /mcp, share links and OTLP ingest (/v1/traces), data in a named
+# volume, non-root, read-only root filesystem.
 #
-# The published ports bind the host's loopback address only. Read auth is on:
-# the UI/API need a Bearer token and OTLP ingest needs a project ingest key.
-# Mint them once in the shared volume with the commands at the bottom before
-# opening the UI. For anything wider than this machine, put a reverse proxy
-# with TLS in front instead of changing these bindings.
+# The container listens on 80. Publishing is a deployment choice: this file
+# maps host loopback port 8080 to it, so nothing is exposed to the network.
+# Change the host side (or put TLS/reverse-proxy in front) as you need; the
+# container side is always 80.
+#
+# Binding 80 inside the container as uid 65532 needs CAP_NET_BIND_SERVICE
+# while every other capability stays dropped; the image is never run as root.
+# Read auth is on: the UI/API need a Bearer token and OTLP ingest needs a
+# project ingest key. Mint them once in the shared volume with the commands at
+# the bottom before opening the UI.
 services:
   otterscope:
     image: ghcr.io/otterscope/otterscope:latest
@@ -13,24 +19,16 @@ services:
     user: "65532:65532"
     read_only: true
     cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
     security_opt:
       - no-new-privileges:true
-    # The image listens on loopback by default. Docker's port forwarding
-    # delivers to the container's own address, so the container has to bind
-    # 0.0.0.0 for the published ports to work at all; the 127.0.0.1 bindings
-    # above are what keep it off the network.
     command:
       - serve
       - -db
       - /data/otterscope.db
-      - -listen
-      - 0.0.0.0:8317
-      - -otlp
-      - 0.0.0.0:4318
       - -read-auth
     ports:
-      - "127.0.0.1:8317:8317"
-      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:8080:80"
     volumes:
       - otterscope-data:/data
     # Mint the first read token (required to open the UI/API; the UI prompts
@@ -44,6 +42,8 @@ services:
     #   docker compose run --rm otterscope project add my-agent -db /data/otterscope.db
     # The ingest key is printed there and listed by `project list`; export it as
     # OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <key>".
+    # Point exporters at the published base URL without /v1/traces (OTLP/HTTP
+    # appends it), e.g. OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8080.
 
 volumes:
   otterscope-data:

@@ -1,9 +1,9 @@
 //! Go-`flag`-compatible argument parsing.
 //!
 //! CLI compatibility is part of the product: operators script
-//! `otterscope serve -listen :8317 -db /data/otterscope.db`, and every existing
-//! wrapper, unit file and Compose command must keep working after the port. So
-//! this parser reproduces Go's `flag` package rules rather than clap's:
+//! `otterscope serve -db /data/otterscope.db`, and every existing wrapper, unit
+//! file and Compose command must keep working after the port. So this parser
+//! reproduces Go's `flag` package rules rather than clap's:
 //!
 //! - one or two leading dashes are equivalent (`-db` == `--db`)
 //! - `-name=value` and `-name value` are both accepted
@@ -140,12 +140,26 @@ mod tests {
     #[test]
     fn accepts_single_and_double_dash_and_equals() {
         let a = p(
-            &["-db", "/tmp/x.db", "--listen=:9000"],
-            &["db", "listen"],
+            &["-db", "/tmp/x.db", "--base-path=/otterscope"],
+            &["db", "base-path"],
             &[],
         );
         assert_eq!(a.get("db"), Some("/tmp/x.db"));
-        assert_eq!(a.get("listen"), Some(":9000"));
+        assert_eq!(a.get("base-path"), Some("/otterscope"));
+    }
+
+    #[test]
+    fn removed_listener_flags_are_rejected() {
+        // The port is fixed at 80, so `-listen`/`-otlp` are not registered
+        // flags: a script that still passes them fails loudly instead of
+        // running on a port it did not ask for.
+        for flag in ["-listen", "-otlp"] {
+            let err = parse(&[flag.to_string(), ":9999".to_string()], &["db"], &[]).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!("flag provided but not defined: {flag}")
+            );
+        }
     }
 
     #[test]

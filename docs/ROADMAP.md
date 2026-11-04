@@ -6,7 +6,7 @@ Dates assume start 2026-07-14. The milestones below were tracked as GitHub miles
 Repo, docs, CI, scaffold. `otterscope serve` starts, opens SQLite, serves a health endpoint and a placeholder UI.
 
 ## M1 — Ingest core (Jul 14 – Jul 27)
-The moat. OTLP/HTTP receiver (protobuf + JSON) on `:4318`; normalization of OTel GenAI spans (old + `gen_ai_latest_experimental` dialects) and OpenInference into the domain model (Run → Step → LLMCall/ToolCall); SQLite schema + migrations; captured real-framework payloads as fixtures (Vercel AI SDK, Pydantic AI, OpenAI Agents SDK via OpenInference). Exit criterion: point a real instrumented agent at Otterscope and its runs land correctly in the DB.
+The moat. OTLP/HTTP receiver (protobuf + JSON) on the server's single port-80 listener, at `POST /v1/traces`; normalization of OTel GenAI spans (old + `gen_ai_latest_experimental` dialects) and OpenInference into the domain model (Run → Step → LLMCall/ToolCall); SQLite schema + migrations; captured real-framework payloads as fixtures (Vercel AI SDK, Pydantic AI, OpenAI Agents SDK via OpenInference). Exit criterion: point a real instrumented agent at Otterscope and its runs land correctly in the DB.
 
 ## M2 — Run explorer UI (Jul 27 – Aug 10)
 Bun + React 19 UI (TanStack Router/Query, Tailwind, shadcn-style components) embedded in the binary: runs list (status, duration, model, tokens, cost, error badge), run detail with step timeline, tool-loop visibility, LLM call inspector (messages in/out), live tail. Exit criterion: debugging a misbehaving agent via the UI is genuinely faster than reading logs.

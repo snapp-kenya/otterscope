@@ -2,6 +2,10 @@
 //! `OTTERSCOPE_*` environment variables, with explicit flags overriding the
 //! result (flags > env > file > defaults — the same precedence the Go version
 //! documents and scripts rely on).
+//!
+//! The HTTP port is deliberately absent: the server always listens on port 80
+//! and one listener serves the UI, API, `/mcp`, share links and OTLP ingest.
+//! How that port is exposed is a deployment decision, not a setting.
 
 use std::path::Path;
 use std::time::Duration;
@@ -19,8 +23,6 @@ pub const DEFAULT_MAX_TRACE_IDS_PER_BATCH: i64 = 1_000;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub db: String,
-    pub listen: String,
-    pub otlp: String,
     pub pricing: String,
     pub judge_url: String,
     /// Allow-list of models an `llm_judge` assertion may name. Empty means
@@ -47,8 +49,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             db: "otterscope.db".into(),
-            listen: "127.0.0.1:8317".into(),
-            otlp: "127.0.0.1:4318".into(),
             pricing: String::new(),
             judge_url: "https://api.openai.com/v1".into(),
             judge_models: Vec::new(),
@@ -72,8 +72,6 @@ impl Default for Config {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct FileConfig {
     db: Option<String>,
-    listen: Option<String>,
-    otlp: Option<String>,
     pricing: Option<String>,
     judge_url: Option<String>,
     judge_models: Option<Vec<String>>,
@@ -100,6 +98,82 @@ impl Config {
         Ok(c)
     }
 
+    /// Resolve the effective `serve` configuration exactly as the command does:
+    /// `-config` (else `OTTERSCOPE_CONFIG`) picks the file, then
+    /// `OTTERSCOPE_*` applies, then explicit flags win. This is the precedence
+    /// test surface; `serve` calls it before binding the one listener.
+    pub fn serve(argv: &[String], getenv: impl Fn(&str) -> Option<String>) -> anyhow::Result<Self> {
+        let mut path = scan_arg(argv, "config").unwrap_or_default();
+        if path.is_empty() {
+            path = getenv("OTTERSCOPE_CONFIG").unwrap_or_default();
+        }
+        let mut cfg = Self::load(&path, getenv).map_err(anyhow::Error::msg)?;
+
+        let parsed = crate::args::parse(
+            argv,
+            &[
+                "config",
+                "db",
+                "pricing",
+                "judge-url",
+                "judge-models",
+                "retention",
+                "alert-interval",
+                "ingest-rate",
+                "ingest-burst",
+                "ingest-max-spans",
+                "ingest-max-trace-ids",
+                "base-path",
+            ],
+            &["read-auth"],
+        )?;
+
+        if parsed.get("db").is_some() {
+            cfg.db = parsed.string("db", &cfg.db);
+        }
+        if parsed.get("pricing").is_some() {
+            cfg.pricing = parsed.string("pricing", &cfg.pricing);
+        }
+        if parsed.get("judge-url").is_some() {
+            cfg.judge_url = parsed.string("judge-url", &cfg.judge_url);
+        }
+        if let Some(v) = parsed.get("judge-models") {
+            cfg.judge_models = parse_model_list(v);
+        }
+        if let Some(v) = parsed.get("retention") {
+            cfg.retention = parse_duration(v).map_err(anyhow::Error::msg)?;
+        }
+        if let Some(v) = parsed.get("alert-interval") {
+            cfg.alert_interval = parse_duration(v).map_err(anyhow::Error::msg)?;
+        }
+        cfg.read_auth = parsed
+            .bool("read-auth", cfg.read_auth)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(v) = parsed.get("ingest-rate") {
+            cfg.ingest_rate = v.parse().map_err(|_| {
+                anyhow::anyhow!("invalid value {v:?} for flag -ingest-rate: parse error")
+            })?;
+        }
+        if let Some(v) = parsed.get("ingest-burst") {
+            cfg.ingest_burst = v.parse().map_err(|_| {
+                anyhow::anyhow!("invalid value {v:?} for flag -ingest-burst: parse error")
+            })?;
+        }
+        if let Some(v) = parsed.get("ingest-max-spans") {
+            cfg.max_spans_per_batch = v.parse().map_err(|_| {
+                anyhow::anyhow!("invalid value {v:?} for flag -ingest-max-spans: parse error")
+            })?;
+        }
+        if let Some(v) = parsed.get("ingest-max-trace-ids") {
+            cfg.max_trace_ids_per_batch = v.parse().map_err(|_| {
+                anyhow::anyhow!("invalid value {v:?} for flag -ingest-max-trace-ids: parse error")
+            })?;
+        }
+        cfg.base_path = basepath::normalize(&parsed.string("base-path", &cfg.base_path))
+            .map_err(anyhow::Error::msg)?;
+        Ok(cfg)
+    }
+
     fn apply_file(&mut self, path: &Path) -> Result<(), String> {
         let data = std::fs::read_to_string(path)
             .map_err(|e| format!("read config {}: {e}", path.display()))?;
@@ -108,12 +182,6 @@ impl Config {
 
         if let Some(v) = f.db {
             self.db = v;
-        }
-        if let Some(v) = f.listen {
-            self.listen = v;
-        }
-        if let Some(v) = f.otlp {
-            self.otlp = v;
         }
         if let Some(v) = f.pricing {
             self.pricing = v;
@@ -157,12 +225,6 @@ impl Config {
 
         if let Some(v) = s("OTTERSCOPE_DB") {
             self.db = v;
-        }
-        if let Some(v) = s("OTTERSCOPE_LISTEN") {
-            self.listen = v;
-        }
-        if let Some(v) = s("OTTERSCOPE_OTLP") {
-            self.otlp = v;
         }
         if let Some(v) = s("OTTERSCOPE_PRICING") {
             self.pricing = v;
@@ -215,6 +277,26 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// The value of `-name`/`--name` in `argv`, including the `-name=value` form.
+fn scan_arg(argv: &[String], name: &str) -> Option<String> {
+    let short = format!("-{name}");
+    let long = format!("--{name}");
+    let short_eq = format!("-{name}=");
+    let long_eq = format!("--{name}=");
+    for (i, arg) in argv.iter().enumerate() {
+        if *arg == short || *arg == long {
+            return argv.get(i + 1).cloned();
+        }
+        if let Some(value) = arg.strip_prefix(&short_eq) {
+            return Some(value.to_string());
+        }
+        if let Some(value) = arg.strip_prefix(&long_eq) {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 /// Parse a comma-separated judge-model allow-list, trimming blanks so `"a, b,"`
@@ -324,13 +406,11 @@ mod tests {
     fn env_overrides_defaults_and_blank_is_ignored() {
         let c = Config::load("", |k| match k {
             "OTTERSCOPE_READ_AUTH" => Some("true".into()),
-            "OTTERSCOPE_LISTEN" => Some(":9999".into()),
             "OTTERSCOPE_DB" => Some(String::new()),
             _ => None,
         })
         .unwrap();
         assert!(c.read_auth);
-        assert_eq!(c.listen, ":9999");
         assert_eq!(c.db, "otterscope.db");
     }
 
@@ -361,5 +441,19 @@ mod tests {
         })
         .unwrap();
         assert_eq!(c.base_path, "/otterscope");
+    }
+
+    #[test]
+    fn listener_keys_are_not_configuration() {
+        // The port is fixed at 80. Old config files that still carry the
+        // removed keys fail loudly instead of implying a knob that does
+        // nothing.
+        for removed in [r#"{"listen": ":9999"}"#, r#"{"otlp": ":4318"}"#] {
+            let err = serde_json::from_str::<FileConfig>(removed).unwrap_err();
+            assert!(
+                err.to_string().contains("unknown field"),
+                "{removed}: {err}"
+            );
+        }
     }
 }
