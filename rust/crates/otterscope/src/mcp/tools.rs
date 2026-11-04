@@ -157,13 +157,24 @@ pub async fn run_tool<S: McpStore>(
             }))
         }
         "get_stats" => {
-            let since = arg_int(args, "sinceMinutes", 0);
+            let since_minutes = arg_int(args, "sinceMinutes", 0);
+            let since = if since_minutes > 0 {
+                let Some(window) = Duration::try_minutes(since_minutes) else {
+                    bail!("sinceMinutes {since_minutes} is outside the representable range");
+                };
+                let Some(start) = Utc::now().checked_sub_signed(window) else {
+                    bail!("sinceMinutes {since_minutes} is outside the representable range");
+                };
+                Some(start)
+            } else {
+                None
+            };
             let filter = Filter {
                 project: arg_str(args, "project"),
                 status: arg_str(args, "status"),
                 model: arg_str(args, "model"),
                 service: arg_str(args, "service"),
-                since: (since > 0).then(|| Utc::now() - Duration::minutes(since)),
+                since,
                 ..Filter::default()
             };
             let stats = store.get_stats(&filter).await?;
@@ -186,11 +197,23 @@ fn arg_str(args: &Map<String, Value>, key: &str) -> String {
 
 fn arg_int(args: &Map<String, Value>, key: &str, default: i64) -> i64 {
     match args.get(key) {
-        Some(Value::Number(number)) => number
-            .as_i64()
-            .or_else(|| number.as_f64().map(|value| value as i64))
-            .unwrap_or(default),
+        Some(Value::Number(number)) => number_to_i64(number).unwrap_or(default),
         _ => default,
+    }
+}
+
+/// Integer tool arguments. A JSON `1e3` arrives as a float, so truncate only
+/// when it is finite and inside `i64`'s range; an absurd value falls back to
+/// the default instead of saturating to a bound the client never asked for.
+fn number_to_i64(number: &serde_json::Number) -> Option<i64> {
+    if let Some(value) = number.as_i64() {
+        return Some(value);
+    }
+    let value = number.as_f64()?;
+    if value.is_finite() && (i64::MIN as f64..=i64::MAX as f64).contains(&value) {
+        Some(value.trunc() as i64)
+    } else {
+        None
     }
 }
 
@@ -216,4 +239,22 @@ fn str_prop(description: &str) -> Value {
 
 fn int_prop(description: &str) -> Value {
     json!({"type": "integer", "description": description})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_arguments_convert_fallibly() {
+        assert_eq!(
+            number_to_i64(&serde_json::Number::from(20)),
+            Some(20),
+            "plain integers pass through"
+        );
+        let float = serde_json::Number::from_f64(1500.5).expect("finite");
+        assert_eq!(number_to_i64(&float), Some(1500), "floats truncate");
+        let huge = serde_json::Number::from_f64(1e300).expect("finite");
+        assert_eq!(number_to_i64(&huge), None, "absurd values fall back");
+    }
 }

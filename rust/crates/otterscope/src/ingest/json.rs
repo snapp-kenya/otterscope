@@ -433,7 +433,7 @@ where
     D: Deserializer<'de>,
 {
     match IntOrString::deserialize(deserializer)? {
-        IntOrString::Int(v) => Ok(v as i32),
+        IntOrString::Int(v) => i32::try_from(v).map_err(de::Error::custom),
         IntOrString::Float(_) => Err(de::Error::custom("expected an integer")),
         IntOrString::Str(v) => match v.as_str() {
             "SPAN_KIND_UNSPECIFIED" => Ok(0),
@@ -452,7 +452,7 @@ where
     D: Deserializer<'de>,
 {
     match IntOrString::deserialize(deserializer)? {
-        IntOrString::Int(v) => Ok(v as i32),
+        IntOrString::Int(v) => i32::try_from(v).map_err(de::Error::custom),
         IntOrString::Float(_) => Err(de::Error::custom("expected an integer")),
         IntOrString::Str(v) => match v.as_str() {
             "STATUS_CODE_UNSET" => Ok(0),
@@ -490,6 +490,17 @@ mod tests {
         );
         assert_eq!(span.start_time_unix_nano, 1_000_000_000);
         assert_eq!(span.end_time_unix_nano, 2_000_000_000);
+    }
+
+    #[test]
+    fn rejects_out_of_range_enum_numbers() {
+        // Go decodes these into int32 and rejects a value that does not fit;
+        // truncating would silently change the span kind or status.
+        let too_big = i64::from(i32::MAX) + 1;
+        assert!(serde_json::from_value::<JsonSpan>(serde_json::json!({"kind": too_big})).is_err());
+        assert!(
+            serde_json::from_value::<JsonStatus>(serde_json::json!({"code": too_big})).is_err()
+        );
     }
 
     #[test]

@@ -175,7 +175,22 @@ impl<W: AlertStore + 'static> Config<W> {
             let stats = match stats_cache.get(&key) {
                 Some(stats) => stats.clone(),
                 None => {
-                    let since = self.now() - chrono::Duration::seconds(rule.window_secs);
+                    let Some(window) = chrono::Duration::try_seconds(rule.window_secs) else {
+                        tracing::error!(
+                            alert = %rule.name,
+                            window_secs = rule.window_secs,
+                            "alerts: window is outside the representable range"
+                        );
+                        continue;
+                    };
+                    let Some(since) = self.now().checked_sub_signed(window) else {
+                        tracing::error!(
+                            alert = %rule.name,
+                            window_secs = rule.window_secs,
+                            "alerts: window starts before the representable calendar range"
+                        );
+                        continue;
+                    };
                     let filter = Filter {
                         project: rule.project.clone(),
                         since: Some(since),
@@ -254,7 +269,10 @@ impl<W: AlertStore + 'static> Config<W> {
             );
             return false;
         }
-        let held = now.timestamp_nanos_opt().unwrap_or_default() - rule.pending_since_ns;
+        let held = now
+            .timestamp_nanos_opt()
+            .unwrap_or_default()
+            .saturating_sub(rule.pending_since_ns);
         held >= rule.settle_secs.saturating_mul(1_000_000_000)
     }
 
@@ -483,6 +501,26 @@ mod tests {
 
     fn allow_loopback() -> WebhookGate {
         Arc::new(|_| Box::pin(async { Ok(()) }))
+    }
+
+    #[tokio::test]
+    async fn unrepresentable_windows_are_skipped_instead_of_panicking() {
+        // i64::MAX seconds does not fit chrono's `TimeDelta`; i64::MAX/1000
+        // does, but starts before the representable calendar range.
+        for window_secs in [i64::MAX, i64::MAX / 1000] {
+            let store = Arc::new(FakeStore::with_rule(Rule {
+                window_secs,
+                ..error_rule("http://127.0.0.1:1/hook", 0)
+            }));
+            store.set_stats(Stats {
+                runs: 10,
+                errors: 9,
+                ..Stats::default()
+            });
+            let watcher = Watcher::new(store.clone(), Duration::from_secs(3600)).expect("watcher");
+            watcher.evaluate_once().await;
+            assert!(!store.firing(), "window {window_secs} must be skipped");
+        }
     }
 
     #[tokio::test]

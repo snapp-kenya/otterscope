@@ -1,5 +1,6 @@
 //! End-to-end smoke tests for the axum server over the real SQLite store and
 //! the real MCP handler — the wiring `serve` uses.
+#![forbid(unsafe_code)]
 
 use std::path::PathBuf;
 use std::sync::Arc;

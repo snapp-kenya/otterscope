@@ -6,6 +6,7 @@
 //! side (every surface under one base path, OTLP sharing the app) is covered by
 //! `server_api.rs` and the server unit tests, which drive the router directly.
 //! This file keeps the precedence contract testable without a socket.
+#![forbid(unsafe_code)]
 
 use std::path::PathBuf;
 

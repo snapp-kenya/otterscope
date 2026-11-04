@@ -168,9 +168,11 @@ pub(crate) fn prompt_identity(name: String, version: String) -> String {
 }
 
 fn timestamp(nanos: u64) -> DateTime<Utc> {
-    let secs = (nanos / 1_000_000_000) as i64;
-    let subsec = (nanos % 1_000_000_000) as u32;
-    DateTime::<Utc>::from_timestamp(secs, subsec).unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+    let secs = i64::try_from(nanos / 1_000_000_000).ok();
+    let subsec = u32::try_from(nanos % 1_000_000_000).ok();
+    secs.zip(subsec)
+        .and_then(|(secs, subsec)| DateTime::<Utc>::from_timestamp(secs, subsec))
+        .unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
 }
 
 #[cfg(test)]

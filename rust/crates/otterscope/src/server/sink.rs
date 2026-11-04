@@ -56,7 +56,9 @@ impl Sink for StoreSink {
             }
         }
         self.evaluator.enqueue(refs);
-        Ok(IngestResult::with_rejections(rejected as i64))
+        Ok(IngestResult::with_rejections(
+            i64::try_from(rejected).unwrap_or(i64::MAX),
+        ))
     }
 }
 

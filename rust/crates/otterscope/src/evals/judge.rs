@@ -22,13 +22,23 @@ pub struct JudgeConfig {
 
 /// Server-configured judge target: base URL, key, and the operator's
 /// allow-list of models an assertion may name.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Endpoint {
     pub base_url: String,
     pub key: String,
     /// Empty means no model is allowed: judge assertions are refused rather
     /// than silently billed.
     pub models: Vec<String>,
+}
+
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("base_url", &self.base_url)
+            .field("key", &crate::redacted(&self.key))
+            .field("models", &self.models)
+            .finish()
+    }
 }
 
 impl Endpoint {

@@ -73,7 +73,7 @@ pub struct AppState<S = Store> {
 
 /// Everything startup decides for the HTTP layer: auth, mount, version, the
 /// browser allow-list snapshot, and judge pricing rules.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Options {
     pub read_auth: bool,
     pub base_path: String,
@@ -83,6 +83,21 @@ pub struct Options {
     pub judge_url: String,
     pub judge_key: String,
     pub csv_export_limit: i64,
+}
+
+impl std::fmt::Debug for Options {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Options")
+            .field("read_auth", &self.read_auth)
+            .field("base_path", &self.base_path)
+            .field("version", &self.version)
+            .field("allowed_origins", &self.allowed_origins)
+            .field("judge_models", &self.judge_models)
+            .field("judge_url", &self.judge_url)
+            .field("judge_key", &crate::redacted(&self.judge_key))
+            .field("csv_export_limit", &self.csv_export_limit)
+            .finish()
+    }
 }
 
 impl Default for Options {

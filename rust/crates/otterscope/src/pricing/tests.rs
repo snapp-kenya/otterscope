@@ -33,6 +33,15 @@ fn longest_prefix_wins() {
 }
 
 #[test]
+fn unrepresentable_cache_counts_do_not_panic() {
+    // Token counts are input-derived and arrive as i64; a cache count at the
+    // extreme must not make the "net of cache" subtraction overflow.
+    let tab = test_table();
+    let cost = tab.cost("claude-sonnet-5", 0, 0, i64::MIN, 0);
+    assert!(cost.expect("known model").is_finite());
+}
+
+#[test]
 fn unknown_model_no_cost() {
     assert!(
         test_table()

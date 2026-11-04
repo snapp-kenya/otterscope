@@ -59,6 +59,28 @@ impl TryFrom<&str> for AlertKind {
     }
 }
 
+impl std::fmt::Debug for Rule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rule")
+            .field("id", &self.id)
+            .field("project", &self.project)
+            .field("name", &self.name)
+            .field("type", &self.r#type)
+            .field("threshold", &self.threshold)
+            .field("window_secs", &self.window_secs)
+            .field("config", &self.config)
+            .field(
+                "webhook_url",
+                &webhook::redact_webhook_url(&self.webhook_url),
+            )
+            .field("enabled", &self.enabled)
+            .field("firing", &self.firing)
+            .field("settle_secs", &self.settle_secs)
+            .field("pending_since_ns", &self.pending_since_ns)
+            .finish()
+    }
+}
+
 impl Rule {
     /// Decode the stored/wire spelling into the typed kind.
     pub fn kind(&self) -> std::result::Result<AlertKind, InvalidEnumValue> {
@@ -68,7 +90,7 @@ impl Rule {
 
 /// One alert definition. The store persists it; this module owns the behaviour
 /// (validate, evaluate, notify).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Rule {
     pub id: i64,

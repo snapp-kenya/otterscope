@@ -3,6 +3,7 @@
 //! Subcommands and flags keep the Go spelling and precedence exactly, because
 //! operators script them: flags override `OTTERSCOPE_*` env, which overrides the
 //! config file, which overrides built-in defaults.
+#![forbid(unsafe_code)]
 
 use std::process::ExitCode;
 
@@ -76,12 +77,13 @@ fn sample(argv: &[String]) -> anyhow::Result<()> {
     let parsed = args::parse(argv, &["config", "db", "runs"], &[])?;
     let db = parsed.string("db", &cfg.db);
     let runs = parsed.int("runs", 60)?;
+    let runs = usize::try_from(runs.max(0)).unwrap_or(usize::MAX);
 
     let store = store::Store::open(&db)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(otterscope::sample::seed(&store, runs.max(0) as usize))?;
+    runtime.block_on(otterscope::sample::seed(&store, runs))?;
     println!("seeded {runs} sample runs into {db}");
     Ok(())
 }
@@ -312,7 +314,12 @@ fn spawn_retention_sweep(
         let keep =
             chrono::Duration::from_std(keep).unwrap_or_else(|_| chrono::Duration::days(36_500));
         loop {
-            let cutoff = chrono::Utc::now() - keep;
+            let Some(cutoff) = chrono::Utc::now().checked_sub_signed(keep) else {
+                // Same fallback as the conversion above: a retention past the
+                // calendar range keeps everything rather than panicking.
+                tracing::warn!(?keep, "retention is outside the representable range");
+                return;
+            };
             let sweep_store = store.clone();
             match tokio::task::spawn_blocking(move || sweep_store.sweep(cutoff)).await {
                 Ok(Ok(0)) => {}
