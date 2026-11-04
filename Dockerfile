@@ -1,12 +1,17 @@
 from --platform=$BUILDPLATFORM docker.io/oven/bun:1.4.2-alpine as web
 
+# The UI bakes its API/router base path into the JavaScript bundle, so a
+# path-based Ingress needs an image built with the same prefix the server is
+# configured with at runtime. The default keeps the root-mounted image.
+arg OTTERSCOPE_BASE_PATH=""
+
 workdir /src/web
 
 copy web/package.json web/bun.lock ./
 run bun install --frozen-lockfile
 
 copy web ./
-run bun run build
+run OTTERSCOPE_BASE_PATH="${OTTERSCOPE_BASE_PATH}" bun run build
 
 from docker.io/library/rust:1.99.1-bookworm as rust
 

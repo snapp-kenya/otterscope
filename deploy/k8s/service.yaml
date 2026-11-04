@@ -1,0 +1,23 @@
+# ClusterIP only. Agents and the UI reach the same port: 80. TLS and any
+# external exposure belong to the ingress controller or Istio, not to this
+# Service (see ingress.yaml, which is optional and disabled by default).
+apiVersion: v1
+kind: Service
+metadata:
+  name: otterscope
+  labels:
+    app.kubernetes.io/name: otterscope
+    app.kubernetes.io/component: server
+spec:
+  type: ClusterIP
+  selector:
+    # component: server is load-bearing: the backup CronJob also carries the
+    # otterscope name label, and without this selector its pods would join the
+    # Service endpoints.
+    app.kubernetes.io/name: otterscope
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,50 @@
+# Optional and DISABLED by default: not listed in kustomization.yaml.
+#
+# Path-based routing example. The app is mounted at /otterscope, so requests
+# are forwarded unchanged and the app strips the prefix itself; do not add a
+# rewrite-target annotation. An Ingress that rewrites /otterscope to / would
+# leave the app at / and break every URL it emits.
+#
+# Enabling this requires all four changes, because a path prefix is a
+# deployment-wide setting rather than an Ingress-only rewrite:
+#
+#   1. Build the image with the SAME prefix. The UI bundle bakes its API and
+#      router base into the JavaScript at build time:
+#          docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t ...
+#      A root-built release image serves the HTML but its JS calls /api, which
+#      is outside this Ingress path.
+#   2. configmap.yaml: OTTERSCOPE_BASE_PATH: "/otterscope"
+#      and OTTERSCOPE_ALLOWED_ORIGINS: "https://otterscope.example.com"
+#      (otherwise the Host/Origin guard answers 403 through the Ingress).
+#   3. deployment.yaml: change all three probe paths to /otterscope/healthz.
+#   4. Add this file to kustomization.yaml resources (or apply it separately).
+#
+# TLS is deliberately not terminated here; set tls.secretName to a certificate
+# managed by cert-manager or your ingress controller, or let an Istio gateway
+# own it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: otterscope
+  labels:
+    app.kubernetes.io/name: otterscope
+    app.kubernetes.io/component: server
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - otterscope.example.com
+      secretName: otterscope-tls
+  rules:
+    - host: otterscope.example.com
+      http:
+        paths:
+          - path: /otterscope
+            pathType: Prefix
+            backend:
+              service:
+                name: otterscope
+                port:
+                  name: http

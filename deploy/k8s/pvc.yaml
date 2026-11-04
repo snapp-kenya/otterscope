@@ -1,0 +1,22 @@
+# The one SQLite database lives here. ReadWriteOnce is deliberate: SQLite's
+# locking is not reliable on a network filesystem, so do not switch this to
+# ReadWriteMany/NFS. One pod is the only writer (see deployment.yaml).
+#
+# No storageClassName is set so the cluster's default class is used. Pin it
+# explicitly if the default is not durable block storage. The pod runs as
+# 65532 and relies on fsGroup 65532 (or a StorageClass that provisions the
+# volume group-writable) to be able to create the database and WAL files.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: otterscope-data
+  labels:
+    app.kubernetes.io/name: otterscope
+    app.kubernetes.io/component: data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 10Gi

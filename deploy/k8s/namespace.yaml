@@ -1,0 +1,12 @@
+# The namespace carries the restricted Pod Security Standard so an accidental
+# privileged pod is rejected by admission instead of running next to the
+# database. The workload manifests below satisfy restricted.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: otterscope
+  labels:
+    app.kubernetes.io/name: otterscope
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

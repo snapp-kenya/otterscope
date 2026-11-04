@@ -236,6 +236,21 @@ fn backup_writes_a_private_working_snapshot() {
 }
 
 #[test]
+fn backup_creates_a_missing_output_directory() {
+    // The Kubernetes CronJob writes to /data/backups/..., and the distroless
+    // image has neither a shell nor mkdir. The requested path's parent must be
+    // created by the binary itself.
+    let (dir, db) = temp_db("backup-nested");
+    let out = dir.join("backups").join("snapshot.db");
+    assert!(!out.parent().expect("parent").exists());
+
+    let backup = run(&["backup", "-o", path_str(&out), "-db", &db]);
+    assert_success(&backup);
+    assert!(out.exists(), "backup file exists");
+    assert!(out.parent().expect("parent").is_dir());
+}
+
+#[test]
 fn renormalize_noops_on_a_fresh_db_and_replays_a_seeded_batch() {
     let (_dir, db) = temp_db("renormalize");
 

@@ -165,6 +165,17 @@ pub fn backup(argv: &[String]) -> anyhow::Result<()> {
     let Some(out) = parsed.get("o").filter(|out| !out.is_empty()) else {
         anyhow::bail!("usage: otterscope backup -o <file> [-db path]");
     };
+    // Create the destination directory so a scheduled backup can target
+    // /data/backups/... on a fresh volume without a shell or init container.
+    // VACUUM INTO refuses a missing parent, and the distroless image has no
+    // mkdir.
+    if let Some(parent) = std::path::Path::new(out)
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create backup directory {}", parent.display()))?;
+    }
     let store = open_store(&db)?;
     store.backup(out)?;
     println!("backed up {db} to {out}");

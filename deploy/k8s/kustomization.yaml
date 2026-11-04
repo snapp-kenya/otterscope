@@ -1,0 +1,22 @@
+# Plain YAML + kustomize. No Helm, no chart, no templating.
+#
+# Apply the whole unit with:
+#   kubectl apply -k deploy/k8s
+#
+# The Ingress is optional and not listed here on purpose; read ingress.yaml
+# before enabling it (a base path also requires a UI build arg and probe-path
+# changes). secret.example.yaml is a non-applied example too.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: otterscope
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - pvc.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - cronjob.yaml
+  # - ingress.yaml
