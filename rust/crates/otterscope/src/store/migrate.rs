@@ -32,6 +32,31 @@ pub const MIGRATIONS: &[(&str, &str)] = &[
     ("0021_token_scopes.sql", include_str!("../../migrations/0021_token_scopes.sql")),
 ];
 
+/// The number of applied and pending migrations, used to decide whether an
+/// existing database needs a pre-migration snapshot.
+pub(crate) fn state(conn: &Connection) -> anyhow::Result<(i64, i64)> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+             name TEXT PRIMARY KEY,
+             applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+         )",
+    )?;
+    let applied: i64 =
+        conn.query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))?;
+    let mut pending = 0i64;
+    for (name, _) in MIGRATIONS {
+        let done: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE name = ?1",
+            [name],
+            |r| r.get(0),
+        )?;
+        if done == 0 {
+            pending += 1;
+        }
+    }
+    Ok((applied, pending))
+}
+
 pub(crate) fn apply(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
