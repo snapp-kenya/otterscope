@@ -8,11 +8,12 @@
 # Enabling this requires all four changes, because a path prefix is a
 # deployment-wide setting rather than an Ingress-only rewrite:
 #
-#   1. Build the image with the SAME prefix. The stock image is root-only; a
-#      prefixed deployment requires the matching build arg because the UI
-#      bundle bakes its API and router base into the JavaScript at build time:
+#   1. Build the image with the SAME prefix. An image built without the build
+#      arg is root-only; a prefixed deployment requires the matching build arg
+#      because the UI bundle bakes its API and router base into the JavaScript
+#      at build time:
 #          docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
-#      A root-built release image serves the HTML but its JS calls /api, which
+#      A root-built image serves the HTML but its JS calls /api, which
 #      is outside this Ingress path. If the baked base and OTTERSCOPE_BASE_PATH
 #      disagree the server starts with a prominent WARN and the UI will not
 #      work (API, MCP and OTLP still do).

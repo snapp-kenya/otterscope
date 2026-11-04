@@ -24,5 +24,5 @@ The decision and its consequences still hold: one self-contained binary (one pro
 What "single binary" means now, precisely:
 
 - One executable contains the server, the SQLite library and the built UI; there is no database server, asset directory or sidecar to deploy.
-- It is **not fully static**. `rusqlite` compiles SQLite from C, so the build needs a C compiler, and the current Linux release binaries link glibc 2.39+ when built on the Ubuntu 24.04 baseline (see the manual release procedure in `docs/packaging.md`). The Docker image is the portable option.
+- It is **not fully static**. `rusqlite` compiles SQLite from C, so the build needs a C compiler, and a Linux build links glibc 2.39+ when built on the Ubuntu 24.04 baseline (2.36 on the Debian bookworm image build). The container image is the portable option.
 - The relevant promise is one file to deploy and one SQLite file for data — not a fully static musl build.

@@ -132,9 +132,9 @@ procedure for a change is [`workflow.md`](workflow.md).
   ```
 
   Do not merge if any of the six fails. A flaky failure is still a failure:
-  re-run the command, then debug; there is no job to re-run. Releases are built
-  and published manually with `scripts/release.sh` (see
-  [`packaging.md`](packaging.md)).
+  re-run the command, then debug; there is no job to re-run. Deployment is the
+  container image: build it with `docker build` from the repository root. There
+  is no packaging or release pipeline.
 
 ## Workflow
 

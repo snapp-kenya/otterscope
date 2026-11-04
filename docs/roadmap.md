@@ -18,9 +18,7 @@ Model-pricing table (maintained, overridable) → per-call/per-run cost; filter/
 Assertions (contains/regex/JSON-schema/latency/cost thresholds) and LLM-as-judge scoring over captured runs; score storage on the run; comparison view (this week vs last, version A vs B). Exit criterion: "did my prompt change make things worse?" answerable in-product.
 
 ## M5 — Ship it (Sep 14 – Sep 28)
-Manual release process per ADR-0004, retargeted to the Rust workspace: `scripts/release.sh` builds the native archives on matching hosts (linux amd64/arm64, darwin arm64, windows amd64), and the multi-arch Docker image is built and pushed manually to GHCR (distroless base), plus a `docker-compose.yml` example; install docs; demo instance with sample data; readme polish with screenshots/GIF; docs for each supported framework. There is no CI; the gate and the release steps are documented in [`development.md`](development.md) and `docs/packaging.md`. Homebrew, deb/rpm, darwin amd64, windows arm64 and signing remain deferred (`docs/packaging.md`). Launch: Show HN + r/selfhosted + awesome-selfhosted PR.
-
-The release process is exercised with `v0.0.x` pre-releases so packaging is proven before launch, not bolted on at the end.
+Deployment is the container image and nothing else: `docker build -t otterscope .` from the repository root, pushed by the deploying team to their own registry. **The release-channel work in this milestone is dropped by operator decision** — there is no release pipeline, no archives, no checksums or signing, no GitHub Releases and no GHCR image, and no package-manager channel; see [ADR-0004](adr/0004-release-channels.md). Remaining M5 work: install docs, demo instance with sample data, readme polish with screenshots/GIF, docs for each supported framework. There is no CI; the gate is documented in [`development.md`](development.md) and deployment in [`deploy/readme.md`](../deploy/readme.md). Launch: Show HN + r/selfhosted + awesome-selfhosted PR.
 
 ## Later / explicitly deferred
 - DuckDB/Parquet analytics sidecar for large volumes (ADR-0002 keeps SQLite until proven insufficient)

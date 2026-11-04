@@ -10,9 +10,16 @@ One self-contained binary. One SQLite file. No ClickHouse, no Redis, no S3, no s
 
 ## Quick start
 
+Deployment is a container image, and the image is built from this repository.
+Nothing is published for you to pull: no archive, no package, no image on a
+public registry.
+
 ```sh
-# grab a release archive (or build from source; see Development), then:
-./otterscope serve
+# build the image from this repository, then run it:
+docker build -t otterscope .
+docker run --cap-drop ALL --cap-add NET_BIND_SERVICE \
+  -p 127.0.0.1:8080:80 -v otterscope:/data \
+  otterscope serve -db /data/otterscope.db
 ```
 
 The server has **one HTTP listener, always on port 80**. The UI, JSON API,
@@ -42,9 +49,9 @@ than hostname — pass `-base-path /otterscope` (`OTTERSCOPE_BASE_PATH`, or
 exporters at `http://host/otterscope`; OTLP/HTTP appends `/v1/traces` itself,
 so ingest lands at `/otterscope/v1/traces`. The UI bundle bakes its router and
 API base at build time, so **a prefixed deployment requires an image built with
-the matching build arg** — the stock image is built for the root path. Build
-the UI with the same value (`OTTERSCOPE_BASE_PATH=/otterscope bun run build` in
-`web/`) and the image with:
+the matching build arg** — an image built without it targets the root path.
+Build the UI with the same value (`OTTERSCOPE_BASE_PATH=/otterscope bun run
+build` in `web/`) and the image with:
 
 ```sh
 docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
@@ -70,22 +77,25 @@ hostname through a reverse proxy, list that origin in
 `OTTERSCOPE_ALLOWED_ORIGINS` — the API checks `Origin` and `Host` on every
 request and refuses a name it was not told about.
 
-Docker works the same way. The image is a distroless build running as uid
-65532. Docker allows that user to bind 80 because the runtime sets
-`net.ipv4.ip_unprivileged_port_start=0`; the command below still adds only
-`CAP_NET_BIND_SERVICE` and drops everything else, so the same invocation also
-works on runtimes that keep privileged ports privileged (Kubernetes/containerd).
-The host-side port is yours to choose — this example publishes loopback port
-8080 to the container's 80:
+Docker works the same way. `otterscope` below is the image you built with
+`docker build -t otterscope .`; there is no published image to pull. It is a
+distroless build running as uid 65532. Docker allows that user to bind 80
+because the runtime sets `net.ipv4.ip_unprivileged_port_start=0`; the command
+below still adds only `CAP_NET_BIND_SERVICE` and drops everything else, so the
+same invocation also works on runtimes that keep privileged ports privileged
+(Kubernetes/containerd). The host-side port is yours to choose — this example
+publishes loopback port 8080 to the container's 80:
 
 ```sh
 docker run --read-only --cap-drop ALL --cap-add NET_BIND_SERVICE \
   -p 127.0.0.1:8080:80 -v otterscope:/data \
-  ghcr.io/otterscope/otterscope serve -db /data/otterscope.db
+  otterscope serve -db /data/otterscope.db
 ```
 
 [docker-compose.yml](docker-compose.yml) is the maintained version of that
-command, with read auth on and the UI published to 127.0.0.1 only. A named
+command, with read auth on and the UI published to 127.0.0.1 only. Its `image:`
+is a placeholder for the image you build and push to your own registry; point
+it at your build (or rebuild the same tag) before `docker compose up`. A named
 volume inherits `/data`'s ownership from the image; a host bind mount has to
 be owned by 65532.
 
@@ -161,15 +171,19 @@ They're good products aimed at a different deployment reality:
 - **LangSmith** and **Braintrust** gate self-hosting behind enterprise contracts.
 - **Phoenix** is ELv2-licensed with an upsell funnel.
 
-Otterscope is Apache-2.0, ships as one binary and one container image, and is built for individuals and small teams whose traces contain customer data they'd rather keep on their own disk. There is no paid tier, no hosted version, no metering and no seat fees — every feature is in the binary you just downloaded ([ADR-0005](docs/adr/0005-no-hosted-or-paid-offering.md)).
+Otterscope is Apache-2.0, ships as one binary and one container image, and is built for individuals and small teams whose traces contain customer data they'd rather keep on their own disk. There is no paid tier, no hosted version, no metering and no seat fees — every feature is in the source you build from ([ADR-0005](docs/adr/0005-no-hosted-or-paid-offering.md)).
 
 ## Install
 
-- **Binaries** — [Releases](https://github.com/otterscope/otterscope/releases) (Linux amd64/arm64, macOS arm64, Windows amd64). The Linux binaries link
-  glibc 2.39+, so Docker is the portable option.
-- **Docker** — `ghcr.io/otterscope/otterscope`
-- **Kubernetes** — plain YAML plus `kustomize`, no Helm; see [deploy/readme.md](deploy/readme.md)
-- **From source** — Bun + Rust; see [Development](#development)
+Deployment is the container image, built from this repository. There is no
+download, no archive and no package-manager channel.
+
+- **Container image** — `docker build -t otterscope .` (the lowercase
+  `dockerfile` at the repository root). The image is the artifact; pushing it to
+  a registry your cluster can reach is the deploying team's job.
+- **From source** — Bun + Rust; see [Development](#development).
+- **Kubernetes** — plain YAML plus `kustomize`, no Helm; deploy the image you
+  built using [deploy/readme.md](deploy/readme.md).
 
 ## Development
 
@@ -196,9 +210,9 @@ from `rust/`, or as `rust/target/release/otterscope` from the repository root.
 The binary is a single deployable file, not a fully static one: SQLite is
 compiled in (`rusqlite` with the `bundled` feature) and the UI is embedded
 with `rust-embed`, so there is no database server, asset directory or sidecar
-to deploy. SQLite comes from C, and the Linux release binaries link glibc
-2.39+ (Docker is the portable option), so "single binary" is the promise —
-not "fully static".
+to deploy. SQLite comes from C, and a Linux build links glibc
+2.39+ (the container image is the portable option), so "single binary" is the
+promise — not "fully static".
 
 Databases are plain SQLite. The schema is a single `STRICT` baseline
 (`0001_initial.sql`) and future changes are new numbered migration files.

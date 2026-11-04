@@ -62,7 +62,9 @@ spec:
                   topologyKey: kubernetes.io/hostname
           containers:
             - name: backup
-              image: ghcr.io/otterscope/otterscope:latest
+              # Same image as the Deployment, built from this repository and
+              # pushed to *your* registry; replace the placeholder reference.
+              image: registry.example.com/otterscope:latest
               imagePullPolicy: IfNotPresent
               command:
                 - /usr/local/bin/otterscope

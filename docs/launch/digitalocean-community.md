@@ -47,14 +47,18 @@ systemd is the leanest.
 ### Option A — Docker (fastest)
 
 If you ticked the Docker Marketplace image when creating the Droplet, or just
-`apt install docker.io`, it's one command:
+`apt install docker.io`, build the image from the repository — there is no
+published image to pull — and run it:
 
 ```sh
+git clone https://github.com/otterscope/otterscope
+cd otterscope
+docker build -t otterscope .
 docker run -d --restart unless-stopped --read-only \
   --cap-drop ALL --cap-add NET_BIND_SERVICE \
   -p 80:80 \
   -v otterscope:/data \
-  ghcr.io/otterscope/otterscope \
+  otterscope \
   serve -db /data/otterscope.db -read-auth
 ```
 
@@ -69,9 +73,9 @@ above) or, say, `-p 8080:80` if something else already owns port 80.
 per-agent ingest key against the same volume:
 
 ```sh
-docker run --rm -v otterscope:/data ghcr.io/otterscope/otterscope \
+docker run --rm -v otterscope:/data otterscope \
   token add local -db /data/otterscope.db
-docker run --rm -v otterscope:/data ghcr.io/otterscope/otterscope \
+docker run --rm -v otterscope:/data otterscope \
   project add my-agent -db /data/otterscope.db
 ```
 
@@ -89,8 +93,10 @@ minted. The `otterscope` volume keeps your data across restarts.
 No Docker:
 
 ```sh
-# grab the linux binary from the releases page, then:
-sudo mv otterscope /usr/local/bin/
+# build the binary from source (Bun + Rust), then:
+cd web && bun install && bun run build
+cd ../rust && cargo build --release
+sudo mv target/release/otterscope /usr/local/bin/
 sudo useradd --system --home /var/lib/otterscope --create-home otterscope
 ```
 
@@ -179,7 +185,8 @@ sitting next to them, costing about as much as a couple of coffees a month.
 
 Repo and docs are here: **https://github.com/otterscope/otterscope**
 (Apache-2.0). There are per-framework setup guides under `docs/frameworks/`,
-and the Docker image is `ghcr.io/otterscope/otterscope`.
+and the container image is built from the repository — `docker build -t
+otterscope .` — nothing is published to pull.
 
 If you self-host it on a Droplet and hit a rough edge — especially a framework
 whose traces don't map cleanly yet — open a PR with the payload. Raw payloads

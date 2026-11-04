@@ -14,9 +14,15 @@
 # Read auth is on: the UI/API need a Bearer token and OTLP ingest needs a
 # project ingest key. Mint them once in the shared volume with the commands at
 # the bottom before opening the UI.
+# The image is built from this repository and pushed to your own registry;
+# nothing is published for you to pull. `registry.example.com` is a placeholder:
+#   docker build -t otterscope .
+#   docker tag otterscope registry.example.com/otterscope:latest
+#   docker push registry.example.com/otterscope:latest
+# (or point image: at a locally built tag).
 services:
   otterscope:
-    image: ghcr.io/otterscope/otterscope:latest
+    image: registry.example.com/otterscope:latest
     restart: unless-stopped
     user: "65532:65532"
     read_only: true

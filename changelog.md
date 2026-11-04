@@ -63,8 +63,8 @@ commit history has the rest.
   `readme.md`, `changelog.md`, `license`, `deploy/readme.md`,
   `docs/frameworks/readme.md`, `docs/roadmap.md`, `docs/workflow.md` and
   `dockerfile`. The Cargo manifests keep their required `Cargo.toml`/
-  `Cargo.lock` names. All links, build commands and archive steps point at the
-  new names; file contents are unchanged.
+  `Cargo.lock` names. All links and build commands point at the new names;
+  file contents are unchanged.
 - The backend is ported from Go to Rust (axum, rusqlite with bundled SQLite,
   prost, rust-embed). The binary stays single and self-contained with the UI
   embedded. CLI flags, `OTTERSCOPE_*` variables and the flags > env > file >
@@ -74,10 +74,12 @@ commit history has the rest.
 - Builds now come from the Rust workspace after the frontend is built:
   `cd web && bun install && bun run build`, then `cd rust && cargo build
   --release`. The old Go build and its installation path are retired.
-- Release builds produce four native archives (Linux amd64/arm64, macOS arm64,
-  Windows amd64) and a multi-arch distroless GHCR image. Linux binaries link
-  glibc 2.39+; Homebrew, deb/rpm, darwin amd64, Windows arm64 and signing are
-  not shipped yet (ADR-0004 amendment, [docs/packaging.md](docs/packaging.md)).
+- The container image built from `dockerfile` is the only artifact. Packaging
+  and release channels are withdrawn by operator decision: no archives, no
+  checksums, no signing, no GitHub Releases, no GHCR image and no
+  package-manager distribution (ADR-0004 amendment,
+  [docs/adr/0004-release-channels.md](docs/adr/0004-release-channels.md)).
+  Deployment is that image pushed to your own registry.
 - The web UI is rebuilt on Bun + React 19 + TanStack Router/Query + Tailwind +
   shadcn-style components. `bun test` replaces vitest, `bun run lint` keeps
   oxlint, and `bun run build` produces the `web/dist` the server embeds.
@@ -100,10 +102,18 @@ commit history has the rest.
 
 - The `.github/` directory is removed entirely: no GitHub Actions workflows and
   no issue templates. No CI service replaces it — the six quality gates are run
-  locally before merge, and releases are built and published manually with
-  `scripts/release.sh` (see [docs/packaging.md](docs/packaging.md)); release
-  artifacts are unsigned. The gate itself is documented in
+  locally before merge. There is no release pipeline either: the only artifact
+  is the container image built from `dockerfile` and pushed by the deploying
+  team to their own registry. The gate itself is documented in
   [docs/development.md](docs/development.md).
+- `docs/packaging.md` and `scripts/release.sh` are deleted. With no archives to
+  build, the archive script and the packaging document had no consumer, and
+  `scripts/` is gone with them.
+- Release channels are withdrawn by operator decision (2026-11-04, ADR-0004
+  amendment): no archives, checksums, signing, GitHub Releases, GHCR image or
+  package-manager distribution. The only artifact is the container image built
+  from the repository's `dockerfile` and pushed to your own registry; deployment
+  is described in [deploy/readme.md](deploy/readme.md).
 - `CLAUDE.md` is replaced by [docs/development.md](docs/development.md), which
   keeps the architecture map, the hard rules, the development commands and the
   no-CI gate, written without vendor-specific tooling references.

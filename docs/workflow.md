@@ -50,6 +50,18 @@ This is the operating procedure for all work on Otterscope, whether done by a hu
 
 ## Releases
 
-- Releases are **manual and unsigned**. Tag `vX.Y.Z` on the shipping branch after bumping `[workspace.package] version` in `rust/Cargo.toml` and `changelog.md`. Then, on each matching host, check out the tag and run `scripts/release.sh --version X.Y.Z`; it builds the frontend and binary, refuses a dirty or version-mismatched tree, and writes `dist/otterscope_X.Y.Z_<artifact>.tar.gz` (`.zip` for Windows). Run it on linux amd64, linux arm64, darwin arm64 and windows amd64; the script derives the target from the host and never assumes a fixed architecture. The four archives, the multi-arch Docker image build/push commands and the Docker-based Linux alternative are in `docs/packaging.md`.
-- Build the frontend first so `web/dist` is embedded (the script does this). Linux binaries link glibc, so they are not fully static; see `docs/packaging.md`.
-- Pre-1.0: minor = features, patch = fixes. Breaking config/API changes need a migration note in the release notes; a JSON contract change links to `docs/api-rust.md`.
+There is no release process beyond building the image. The container image built
+from the repository's `dockerfile` is the only artifact this project produces:
+`docker build -t otterscope .` from the repository root. The deploying team
+pushes it to **their own** registry; nothing is published here — no archives, no
+checksums, no signatures, no GitHub Releases, no GHCR image and no
+package-manager distribution. See
+[ADR-0004](adr/0004-release-channels.md) and
+[deploy/readme.md](../deploy/readme.md).
+
+The branch and merge discipline above is unchanged by this: one branch per
+change, squash-merge to the shipping branch, never merge on a red gate. The
+version lives in `[workspace.package]` in `rust/Cargo.toml` (`otterscope
+version` reports it) and notable changes go in `changelog.md`; pre-1.0,
+minor = features, patch = fixes. Breaking config/API changes need a migration
+note in the changelog; a JSON contract change links to `docs/api-rust.md`.

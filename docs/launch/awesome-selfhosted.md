@@ -19,19 +19,21 @@ Category: **Generative Artificial Intelligence (GenAI)** — the tag Agenta,
 Khoj, LibreChat and the other LLM tooling sits under. In single-page mode a
 project shows only under the *first* tag listed, so keep GenAI first.
 
-## When it is eligible
+## Status: blocked, do not submit
 
-The clock is **four months from the first tagged release**, not from repo
-creation. Otterscope's first release, `v0.0.1`, was published **2026-07-14**,
-so the earliest submission date is around **2026-11-14**.
+Their clock is **four months from the first tagged release**, not from repo
+creation, and their reviewers check for a tagged release explicitly: a project
+showing none gets closed with a request to cut one.
 
-One thing to fix before then: every release so far is marked **pre-release**,
-so the repo has no "latest release" on GitHub. Their reviewers check for a
-tagged release explicitly, and a project showing none gets closed with a
-request to cut one. Publish a normal (non-pre-release) version before
-submitting.
+This repository no longer publishes tagged releases. Releases, archives and
+every other distribution channel are withdrawn by operator decision
+([ADR-0004](../adr/0004-release-channels.md)); the only artifact is the
+container image built from `dockerfile`. So this submission cannot proceed as
+drafted, and nothing here should be published until that changes. The draft
+entry below is kept only as ready-made metadata; the file is a candidate for
+deletion.
 
-The Show HN and r/selfhosted posts have no such gate.
+The Show HN and r/selfhosted drafts have no such gate.
 
 ## Draft entry
 

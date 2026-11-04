@@ -48,12 +48,41 @@ and port as the UI; the path (`/v1/traces`) selects ingest.
   `pvc.yaml` explicitly. The pod runs as uid/gid 65532 and relies on
   `fsGroup: 65532` (or a pre-provisioned group-writable volume) to create the
   database and WAL files.
-- `kubectl` (its embedded kustomize is enough) and the image
-  `ghcr.io/otterscope/otterscope:latest`. Pin a release tag or digest in
-  `deployment.yaml` and `cronjob.yaml` for production; both must run the same
-  version because the backup command opens the database and applies/migrates
-  the schema the same way `serve` does.
+- `kubectl` (its embedded kustomize is enough) and an image in a registry your
+  cluster can pull from. Nothing is published for you to pull: build the image
+  from this repository and push it to **your own** registry (see below). The
+  manifests use `registry.example.com/otterscope:latest` as a placeholder;
+  replace it with your reference and pin a tag or digest for production, in
+  `deployment.yaml` and `cronjob.yaml` — both must run the same version because
+  the backup command opens the database and applies/migrates the schema the
+  same way `serve` does.
 - No Helm. Do not add one.
+
+## Build and push the image
+
+The container image built from the repository's `dockerfile` is the only
+artifact: no archive, no checksum, no image published for you. Build it, tag it
+for *your* registry, and push it:
+
+```sh
+# from the repository root
+docker build -t otterscope .
+docker tag otterscope registry.example.com/otterscope:vX.Y.Z
+docker push registry.example.com/otterscope:vX.Y.Z
+```
+
+`registry.example.com` is a placeholder for your own registry and repository.
+Then set that reference in `deployment.yaml` and `cronjob.yaml` (the Deployment
+and the backup CronJob share the image name, so one `kustomize edit set image`
+updates both):
+
+```sh
+kustomize edit set image \
+  registry.example.com/otterscope=registry.example.com/otterscope:vX.Y.Z
+```
+
+A path-prefixed deployment needs the base-path build argument; see "Optional
+path-based Ingress" below.
 
 ## Install
 
@@ -196,14 +225,14 @@ the app strips the prefix itself. Enabling it needs all of these, because a
 base path is a build-time + runtime setting, not just an Ingress rewrite:
 
 1. **Build the image with the same prefix.** A prefixed deployment requires
-   the matching build argument: the stock image is root-only, and the React
-   bundle bakes its API and router base into the JavaScript at build time.
+   the matching build argument: an image built without it is root-only, and the
+   React bundle bakes its API and router base into the JavaScript at build time.
 
    ```sh
    docker build --build-arg OTTERSCOPE_BASE_PATH=/otterscope -t <img> .
    ```
 
-   A root-built release image under this Ingress serves the HTML but its JS
+   A root-built image under this Ingress serves the HTML but its JS
    calls `/api`, which the Ingress does not route. The server rewrites asset
    URLs in `index.html` at request time, but not the JS bundle. If the baked
    base and `OTTERSCOPE_BASE_PATH` disagree the server still starts (API, MCP
@@ -274,7 +303,7 @@ Two operational facts the manifest cannot hide:
 
 ### Pre-upgrade snapshot and restore
 
-> **Schema baseline.** This release starts from a new SQLite baseline
+> **Schema baseline.** This build starts from a new SQLite baseline
 > (`0001_initial.sql`, [ADR-0008](../docs/adr/0008-sqlite-schema-redesign.md)).
 > A database created by an older Otterscope build is **refused**, not
 > migrated in place: the pod exits with an error that says to start a new
@@ -313,7 +342,7 @@ volume.
 # 2. Change the image field in deployment.yaml and cronjob.yaml. The standalone
 #    kustomize CLI can do both with:
 #      kustomize edit set image \
-#        ghcr.io/otterscope/otterscope=ghcr.io/otterscope/otterscope:vX.Y.Z
+#        registry.example.com/otterscope=registry.example.com/otterscope:vX.Y.Z
 # 3. Apply and watch.
 kubectl apply -k deploy/k8s
 kubectl -n otterscope rollout status deployment/otterscope --timeout=5m
