@@ -1,41 +1,32 @@
-name: CI
+# reference-only: the Go tree is frozen while the Rust port replaces it. This
+# workflow is kept for manual runs against the reference implementation and is
+# not a pull-request gate; see rust.yml.
+name: go (reference only)
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   go:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Install frontend deps
-        run: npm ci
+          bun-version: 1.4.2
+      - name: build web
         working-directory: web
-      - name: Lint frontend
-        run: npm run lint
-        working-directory: web
-      - name: Test frontend
-        run: npm test
-        working-directory: web
-      - name: Build frontend
-        run: npm run build
-        working-directory: web
+        run: bun install --frozen-lockfile && bun run build
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build
+      - name: build
         run: CGO_ENABLED=0 go build ./...
-      - name: Vet
+      - name: vet
         run: go vet ./...
-      - name: Test
+      - name: test
         run: go test -timeout 120s ./...

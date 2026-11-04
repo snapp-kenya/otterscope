@@ -1,17 +1,17 @@
-# Build context for the image. The Dockerfile only needs the prebuilt static
-# binary at the context root (the release pipeline puts it there), so keep the
-# context to that instead of shipping the repo, the frontend sources, and any
-# local database dumps to the daemon.
 .git
 .github
+.worktrees
+cmd
+internal
 docs
-web
-**/node_modules
-dist
+go.mod
+go.sum
+web/node_modules
+web/dist
+rust/target
 *.db
 *.db-wal
 *.db-shm
-.goreleaser.yaml
 CLAUDE.md
 README.md
 docker-compose.yml

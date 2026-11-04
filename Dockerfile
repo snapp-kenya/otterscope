@@ -1,37 +1,46 @@
-# Built by GoReleaser: the context contains the prebuilt static binary.
-# FROM scratch is a product constraint (ADR-0004): no runtime dependencies
-# beyond the binary, CA certs (for LLM-judge evals), and the data volume.
-FROM alpine:3.22 AS certs
-RUN apk add --no-cache ca-certificates \
+from --platform=$BUILDPLATFORM docker.io/oven/bun:1.4.2-alpine as web
+
+workdir /src/web
+
+copy web/package.json web/bun.lock ./
+run bun install --frozen-lockfile
+
+copy web ./
+run bun run build
+
+from docker.io/library/rust:1.99.1-bookworm as rust
+
+workdir /src/rust
+
+copy rust/Cargo.toml rust/Cargo.lock ./
+copy rust/crates/otterscope/Cargo.toml crates/otterscope/Cargo.toml
+copy rust/crates/otterscope/build.rs crates/otterscope/build.rs
+
+run mkdir -p crates/otterscope/src \
+ && printf 'fn main() {}' > crates/otterscope/src/main.rs \
+ && printf '' > crates/otterscope/src/lib.rs \
+ && cargo build --release
+
+copy rust/crates/otterscope ./crates/otterscope
+copy --from=web /src/web/dist /src/web/dist
+
+arg version
+run if [ -n "$version" ]; then sed -i -E "s/^version = \"[^\"]+\"/version = \"$version\"/" Cargo.toml; fi \
+ && touch crates/otterscope/src/main.rs crates/otterscope/src/lib.rs \
+ && cargo build --release \
  && mkdir -p /data \
  && chown 65532:65532 /data
 
-FROM scratch
-COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --chmod=0555 otterscope /otterscope
+from gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
 
-# /data is the only writable path: the SQLite database, its WAL/journal
-# siblings, and any temp files SQLite needs all land here. It ships in the
-# image owned by the runtime uid so the server can create its own database
-# without a root pre-step; a fresh named volume inherits that ownership, while
-# a host bind mount must be chowned to 65532 on the host.
-COPY --from=certs --chown=65532:65532 /data /data
-ENV TMPDIR=/data \
+copy --from=rust /src/rust/target/release/otterscope /usr/local/bin/otterscope
+copy --from=rust --chown=65532:65532 /data /data
+
+env TMPDIR=/data \
     SQLITE_TMPDIR=/data
-WORKDIR /data
-VOLUME ["/data"]
-
-# Non-root by default: uid/gid 65532 is the "nonroot" convention (distroless).
-# Combined with scratch's lack of a shell and the single writable mount, this
-# lets the container run with --read-only and no added capabilities.
-USER 65532:65532
-
-EXPOSE 8317 4318
-
-# Deliberately no -listen/-otlp: the binary's own defaults are loopback
-# (127.0.0.1:8317 and 127.0.0.1:4318), which is the right posture for an image
-# meant to be used locally. A deployment that must accept connections through
-# the container's network namespace (docker compose, Kubernetes) passes
-# -listen/-otlp explicitly and owns the exposure decision itself.
-ENTRYPOINT ["/otterscope"]
-CMD ["serve", "-db", "/data/otterscope.db"]
+workdir /data
+volume ["/data"]
+user 65532:65532
+expose 8317 4318
+entrypoint ["/usr/local/bin/otterscope"]
+cmd ["serve", "-db", "/data/otterscope.db"]

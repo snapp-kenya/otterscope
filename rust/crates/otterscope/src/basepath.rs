@@ -67,7 +67,10 @@ mod tests {
 
     #[test]
     fn strip_requires_a_segment_boundary() {
-        assert_eq!(strip("/otterscope", "/otterscope/api/runs"), Some("/api/runs"));
+        assert_eq!(
+            strip("/otterscope", "/otterscope/api/runs"),
+            Some("/api/runs")
+        );
         assert_eq!(strip("/otterscope", "/otterscope"), Some("/"));
         assert_eq!(strip("/otterscope", "/otterscopeX/api"), None);
         assert_eq!(strip("", "/api"), Some("/api"));

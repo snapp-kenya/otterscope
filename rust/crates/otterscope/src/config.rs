@@ -192,7 +192,8 @@ impl Config {
                 .map_err(|_| format!("OTTERSCOPE_MAX_TRACE_IDS_PER_BATCH: invalid value {v:?}"))?;
         }
         if let Some(v) = s("OTTERSCOPE_RETENTION") {
-            self.retention = parse_duration(&v).map_err(|e| format!("OTTERSCOPE_RETENTION: {e}"))?;
+            self.retention =
+                parse_duration(&v).map_err(|e| format!("OTTERSCOPE_RETENTION: {e}"))?;
         }
         if let Some(v) = s("OTTERSCOPE_ALERT_INTERVAL") {
             self.alert_interval =
@@ -294,7 +295,10 @@ mod tests {
 
     #[test]
     fn durations_match_go_spellings() {
-        assert_eq!(parse_duration("720h").unwrap(), Duration::from_secs(2_592_000));
+        assert_eq!(
+            parse_duration("720h").unwrap(),
+            Duration::from_secs(2_592_000)
+        );
         assert_eq!(parse_duration("1m30s").unwrap(), Duration::from_secs(90));
         assert_eq!(parse_duration("500ms").unwrap(), Duration::from_millis(500));
         assert_eq!(parse_duration("1.5h").unwrap(), Duration::from_secs(5400));
