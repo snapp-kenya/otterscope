@@ -9,6 +9,7 @@ import { SavedViews } from "@/components/saved-views";
   true;
 
 const originalFetch = globalThis.fetch;
+const originalPrompt = window.prompt;
 let host: HTMLDivElement;
 let root: Root;
 
@@ -78,6 +79,8 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   globalThis.fetch = originalFetch;
+  window.prompt = originalPrompt;
+  localStorage.clear();
 });
 
 const savedViews = () =>
@@ -166,5 +169,71 @@ describe("SavedViews", () => {
     expect(host.textContent).toContain("Couldn't delete view");
     expect(host.textContent).toContain("view is locked");
     expect(host.textContent).toContain("prod errors");
+  });
+});
+
+describe("SavedViews admin recovery", () => {
+  const submit = () => {
+    const found = host.querySelector('button[type="submit"]');
+    if (!found) throw new Error("no submit button");
+    return found;
+  };
+
+  const setName = async (value: string) => {
+    const input = host.querySelector("#view-name") as HTMLInputElement | null;
+    if (!input) throw new Error("no view name input");
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!;
+    await act(async () => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("saves a view for a read-token user after one admin prompt", async () => {
+    localStorage.setItem("otterscope_token", "read-token");
+    const saved: { id: number; name: string; params: unknown }[] = [];
+    let prompts = 0;
+    window.prompt = (() => {
+      prompts += 1;
+      return "admin-token";
+    }) as typeof window.prompt;
+
+    const calls: { url: string; init: RequestInit }[] = [];
+    globalThis.fetch = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      calls.push({ url: String(input), init: init ?? {} });
+      const method = init?.method ?? "GET";
+      if (method === "POST") {
+        const auth = new Headers(init?.headers).get("Authorization");
+        if (auth !== "Bearer admin-token") {
+          return json({ error: "admin token required" }, 403);
+        }
+        const body = JSON.parse(String(init?.body)) as { name: string };
+        const view = { id: saved.length + 1, name: body.name, params: {} };
+        saved.push(view);
+        return json(view, 201);
+      }
+      return json({ views: saved });
+    }) as typeof fetch;
+
+    await render(savedViews());
+    await flush();
+
+    await click(button("+ save view"));
+    await flush();
+    await setName("prod errors");
+    await click(submit());
+    await flush();
+
+    expect(prompts).toBe(1);
+    expect(localStorage.getItem("otterscope_token")).toBe("admin-token");
+    expect(calls.filter((call) => call.init.method === "POST")).toHaveLength(2);
+    expect(host.textContent).toContain("prod errors");
+    expect(host.textContent).not.toContain("Couldn't save view");
   });
 });

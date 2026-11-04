@@ -79,7 +79,7 @@ const fetchWithAuth = async (
   url: string,
   opts: RequestInit,
   state: AuthState,
-  adminRetry: boolean,
+  adminScoped: boolean,
 ): Promise<Response> => {
   const token = readToken();
   const headers = new Headers(opts.headers ?? {});
@@ -94,13 +94,13 @@ const fetchWithAuth = async (
         url,
         opts,
         { ...state, readRetried: true },
-        adminRetry,
+        adminScoped,
       );
     }
   }
   if (
     res.status === 403 &&
-    adminRetry &&
+    adminScoped &&
     !state.adminRetried &&
     (await adminTokenRequired(res))
   ) {
@@ -112,7 +112,7 @@ const fetchWithAuth = async (
         url,
         opts,
         { ...state, adminRetried: true },
-        adminRetry,
+        adminScoped,
       );
     }
   }
@@ -144,25 +144,11 @@ export const getJson = async <T>(
   return (await res.json()) as T;
 };
 
-export const postJson = async <T>(
-  path: string,
-  body?: unknown,
-): Promise<T> => {
-  const res = await request(path, {
-    method: "POST",
-    headers: body === undefined ? undefined : jsonHeaders,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return (await res.json()) as T;
-};
-
-export const deleteResource = async (path: string): Promise<void> => {
-  await request(path, { method: "DELETE" });
-};
-
 export const errorMessage = (err: unknown): string =>
   err instanceof ApiError ? err.message : transportMessage(err);
 
+// Every mutating route is admin-scoped, so mutations recover from the server's
+// 403 `admin token required` exactly here: one prompt, one retry, then the error.
 const adminFetch = async (
   path: string,
   init: RequestInit,

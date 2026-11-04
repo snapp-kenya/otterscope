@@ -47,9 +47,7 @@ import {
 import {
   adminDelete,
   adminPostJson,
-  deleteResource,
   getJson,
-  postJson,
   request,
 } from "@/api/client";
 
@@ -100,16 +98,16 @@ export const fetchAssertions = async (
   );
 
 export const createAssertion = async (input: AssertionInput) =>
-  await postJson<AssertionWire>(endpoints.assertions(), input);
+  await adminPostJson<AssertionWire>(endpoints.assertions(), input);
 
 export const deleteAssertion = async (id: number): Promise<void> =>
-  deleteResource(endpoints.assertion(id));
+  adminDelete(endpoints.assertion(id));
 
 export const evaluateAssertions = async (
   options: EvaluateOptions,
 ): Promise<EvaluateReport> =>
   decodeEvaluateReport(
-    await postJson<EvaluateReportWire>(
+    await adminPostJson<EvaluateReportWire>(
       endpoints.evaluate(evaluateQuery(options)),
     ),
   );
@@ -119,11 +117,11 @@ export const fetchViews = async (signal?: AbortSignal) =>
 
 export const createView = async (name: string, params: unknown) =>
   decodeSavedView(
-    await postJson<SavedViewWire>(endpoints.views(), { name, params }),
+    await adminPostJson<SavedViewWire>(endpoints.views(), { name, params }),
   );
 
 export const deleteView = async (id: number): Promise<void> =>
-  deleteResource(endpoints.view(id));
+  adminDelete(endpoints.view(id));
 
 export const fetchShares = async (id: string, signal?: AbortSignal) =>
   decodeShares(
@@ -142,10 +140,10 @@ export const fetchAlerts = async (signal?: AbortSignal) =>
   decodeAlerts(await getJson<AlertsWire>(endpoints.alerts(), signal));
 
 export const createAlert = async (input: AlertInput) =>
-  decodeAlert(await postJson<AlertWire>(endpoints.alerts(), input));
+  decodeAlert(await adminPostJson<AlertWire>(endpoints.alerts(), input));
 
 export const deleteAlert = async (id: number): Promise<void> =>
-  deleteResource(endpoints.alert(id));
+  adminDelete(endpoints.alert(id));
 
 export const fetchTokens = async (signal?: AbortSignal): Promise<Token[]> =>
   decodeTokens(await getJson<TokensWire>(endpoints.tokens(), signal));
@@ -154,11 +152,11 @@ export const createToken = async (
   input: TokenInput,
 ): Promise<CreatedToken> =>
   decodeCreatedToken(
-    await postJson<CreatedTokenWire>(endpoints.tokens(), input),
+    await adminPostJson<CreatedTokenWire>(endpoints.tokens(), input),
   );
 
 export const deleteToken = async (id: string): Promise<void> =>
-  deleteResource(endpoints.token(id));
+  adminDelete(endpoints.token(id));
 
 export const fetchAudit = async (
   limit = 500,

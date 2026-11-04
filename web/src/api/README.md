@@ -16,9 +16,11 @@ RFC 9457 problem documents.
   `/otterscope/api/runs`.
 - `Authorization: Bearer <token>` is attached from `localStorage`; a `401`
   prompts once for a token and retries. `GET /api/stream` uses `?token=` because
-  EventSource cannot set headers. A `403 admin token required` on share minting
-  or revocation prompts once for an admin token, stores it, and retries; a second
-  failure is surfaced. Other `403`s are shown without prompting.
+  EventSource cannot set headers. A `403 admin token required` on any
+  admin-scoped mutation — share mint/revoke, saved views, alerts, assertions,
+  evaluation, tokens — prompts once for an admin token, stores it, and retries;
+  a second failure is surfaced. Other `403`s are shown without prompting, and a
+  dismissed prompt means no retry.
 - Writes with a body use `Content-Type: application/json`; the server rejects
   other content types with `415` and bodies over 1 MiB with `413`.
 - JSON responses carry `Cache-Control: no-store`; the server stamps CSP,

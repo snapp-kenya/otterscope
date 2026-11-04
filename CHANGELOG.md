@@ -82,6 +82,10 @@ commit history has the rest.
   timeline bars are clamped to the pane.
 - Saved views now apply over the defaults instead of replacing them, so a
   view that does not name every filter keeps the others.
+- Saving or deleting a view and creating, editing or deleting an alert no
+  longer dead-ends with `403 admin token required` for a read-token user:
+  every admin-scoped mutation now asks once for an admin token and retries,
+  as share minting and revocation already did.
 - Retention deletes the full-text index rows before the runs they index and
   vacuums afterwards, so deleted content stops being searchable and the
   file shrinks instead of keeping the text.
