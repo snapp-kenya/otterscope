@@ -332,6 +332,7 @@ pub(crate) fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Resp
                 header::CONTENT_TYPE,
                 "application/json",
             );
+            insert_header(response.headers_mut(), header::CACHE_CONTROL, "no-store");
             response
         }
         Err(err) => {

@@ -34,9 +34,15 @@ pub(crate) fn router() -> Router<ServerState> {
         .route("/api/runs", get(list_runs))
         .route("/api/runs.csv", get(runs_csv))
         .route("/api/runs/{id}", get(get_run))
-        .route("/api/runs/{id}/share", post(create_share))
+        .route(
+            "/api/runs/{id}/share",
+            post(create_share).route_layer(admin()),
+        )
         .route("/api/runs/{id}/shares", get(list_shares))
-        .route("/api/shares/{token}", delete(delete_share))
+        .route(
+            "/api/shares/{token}",
+            delete(delete_share).route_layer(admin()),
+        )
         .route("/api/shared/{token}", get(shared_run))
         .route("/api/stats", get(stats))
         .route(
@@ -1102,6 +1108,7 @@ async fn runs_csv(State(state): State<ServerState>, RawQuery(raw): RawQuery) -> 
     }
 
     let mut response = plain_text(StatusCode::OK, "text/csv; charset=utf-8", &csv);
+    insert_header(response.headers_mut(), header::CACHE_CONTROL, "no-store");
     insert_header(
         response.headers_mut(),
         header::CONTENT_DISPOSITION,

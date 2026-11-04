@@ -62,6 +62,20 @@ async fn send_json(app: &Router, request: Request<Body>) -> (StatusCode, Value) 
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
+async fn send_with_token(
+    app: &Router,
+    request: Request<Body>,
+    token: &str,
+) -> (StatusCode, Vec<u8>) {
+    let mut request = request;
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {token}").parse().expect("header"),
+    );
+    let (status, _, body) = send(app, request).await;
+    (status, body)
+}
+
 #[tokio::test]
 async fn routes_work_against_the_real_store() {
     let (dir, store) = temp_db();
@@ -205,6 +219,28 @@ async fn read_auth_uses_real_tokens() {
     let (dir, store) = temp_db();
     let store = Arc::new(store);
     let read = store.create_token("script", Scope::Read).expect("token");
+    let admin = store
+        .create_token("operator", Scope::Admin)
+        .expect("admin token");
+    let start = Utc.timestamp_opt(1000, 0).single().expect("timestamp");
+    store
+        .upsert_steps(&[Step {
+            id: "r1-root".into(),
+            project: "default".into(),
+            run_id: "r1".into(),
+            parent_id: String::new(),
+            kind: StepKind::Agent,
+            name: "root".into(),
+            service: "demo".into(),
+            agent_name: "demo".into(),
+            status: Status::Ok,
+            start,
+            end: Some(start + chrono::Duration::seconds(9)),
+            error: String::new(),
+            llm: None,
+            tool: None,
+        }])
+        .expect("seed run");
     let app = app(
         store.clone(),
         Options {
@@ -231,6 +267,50 @@ async fn read_auth_uses_real_tokens() {
     );
     let (status, _) = send_json(&app, mutation).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Publishing a run is a mutation: a read token cannot mint or revoke.
+    let (status, _) = send_with_token(
+        &app,
+        request("POST", "/api/runs/r1/share", None),
+        &read.token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, minted) = send_with_token(
+        &app,
+        request("POST", "/api/runs/r1/share", None),
+        &admin.token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let minted: Value = serde_json::from_slice(&minted).expect("json");
+    let share = minted["token"].as_str().expect("share token").to_string();
+
+    let (status, shared) =
+        send_json(&app, request("GET", &format!("/api/shared/{share}"), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(shared["run"]["id"], "r1");
+
+    let (status, _) = send_with_token(
+        &app,
+        request("DELETE", &format!("/api/shares/{share}"), None),
+        &read.token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send_json(&app, request("GET", &format!("/api/shared/{share}"), None)).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = send_with_token(
+        &app,
+        request("DELETE", &format!("/api/shares/{share}"), None),
+        &admin.token,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send_json(&app, request("GET", &format!("/api/shared/{share}"), None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     drop(store);
     let _ = std::fs::remove_dir_all(dir);

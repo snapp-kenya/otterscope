@@ -1404,6 +1404,33 @@ async fn security_headers_set() {
 }
 
 #[tokio::test]
+async fn json_responses_forbid_caching() {
+    let fake = Fake::new();
+    seed_run(&fake, "c1", 1000);
+    let app = app(&fake);
+
+    let (status, headers, _) = send(&app, make_request(Method::GET, "/api/runs", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+
+    let (status, headers, body) =
+        send(&app, make_request(Method::GET, "/api/runs/missing", None)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        headers
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
+    assert!(body_text(&body).contains("run not found"));
+}
+
+#[tokio::test]
 async fn metrics_requires_token() {
     let fake = Fake::new();
     seed_run(&fake, "m1", 1000);
@@ -2060,6 +2087,12 @@ async fn runs_csv() {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.contains("otterscope-runs.csv"))
     );
+    assert_eq!(
+        headers
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("no-store")
+    );
     let text = body_text(&body);
     let rows: Vec<&str> = text.lines().collect();
     assert_eq!(rows.len(), 3);
@@ -2289,6 +2322,8 @@ async fn read_token_cannot_mutate() {
             Some(r#"{"name":"v","params":{}}"#),
         ),
         (Method::DELETE, "/api/views/1", None),
+        (Method::POST, "/api/runs/r1/share", None),
+        (Method::DELETE, "/api/shares/tok_nope", None),
     ];
     for (method, path, body) in mutations {
         let (status, payload) =
@@ -2320,6 +2355,89 @@ async fn read_token_cannot_mutate() {
         let (status, _) = token_send(&app, Method::GET, path, Some(&read.token), None).await;
         assert_eq!(status, StatusCode::OK, "GET {path}");
     }
+}
+
+#[tokio::test]
+async fn share_mutations_require_admin() {
+    let (fake, app, read, admin) = auth_app();
+    seed_run(&fake, "r1", 1000);
+
+    let (status, payload) = token_send(
+        &app,
+        Method::POST,
+        "/api/runs/r1/share",
+        Some(&read.token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "read token minted a share: {}",
+        body_text(&payload)
+    );
+
+    let (status, payload) = token_send(
+        &app,
+        Method::POST,
+        "/api/runs/r1/share",
+        Some(&admin.token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{}", body_text(&payload));
+    let minted: Value = serde_json::from_slice(&payload).expect("json");
+    let token = minted["token"].as_str().expect("token").to_string();
+
+    // Publishing is a mutation, but reading the published run stays public.
+    let (status, shared) = send_json(
+        &app,
+        make_request(Method::GET, &format!("/api/shared/{token}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(shared["run"]["id"], "r1");
+
+    let (status, payload) = token_send(
+        &app,
+        Method::DELETE,
+        &format!("/api/shares/{token}"),
+        Some(&read.token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "read token revoked a share: {}",
+        body_text(&payload)
+    );
+    let (status, _) = send_json(
+        &app,
+        make_request(Method::GET, &format!("/api/shared/{token}"), None),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the refused revoke still took effect"
+    );
+
+    let (status, _) = token_send(
+        &app,
+        Method::DELETE,
+        &format!("/api/shares/{token}"),
+        Some(&admin.token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = send_json(
+        &app,
+        make_request(Method::GET, &format!("/api/shared/{token}"), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

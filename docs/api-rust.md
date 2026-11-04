@@ -18,7 +18,7 @@ Requests outside it get `404`; the SPA is only served for non-API paths.
   headers.
 - Public: `/healthz`, `/api/shared/{token}`, and the SPA.
 - Read token: every `GET`. Admin token: every mutating route (assertions, alerts,
-  saved views, tokens, evaluate).
+  saved views, tokens, evaluate, share minting/revocation).
 - `401` for a missing/invalid token on a protected route; `403` when a read token
   reaches an admin route.
 - `Origin`/`Host` allow-list on `/api/*` and `/mcp`: loopback, IP literals, and
@@ -26,8 +26,8 @@ Requests outside it get `404`; the SPA is only served for non-API paths.
 - Writes with a body must declare `application/json`, else `415`.
 - Request bodies are capped at 1 MiB (`413`).
 - Every response carries `Content-Security-Policy`, `X-Content-Type-Options:
-  nosniff`, `Referrer-Policy: no-referrer`. JSON API responses add
-  `Cache-Control: no-store`.
+  nosniff`, `Referrer-Policy: no-referrer`. JSON API responses and CSV exports
+  add `Cache-Control: no-store`.
 - Unknown `/api/*` paths are `404` JSON; only non-API paths fall back to the SPA.
 
 ## Health and metrics
@@ -140,7 +140,7 @@ window, or `limit`; otherwise `400`. Unknown run: `404`. Runs are capped
 
 ## Shares
 
-`POST /api/runs/{id}/share` → `201` — mint a public link.
+`POST /api/runs/{id}/share` (admin) → `201` — mint a public link.
 
 ```json
 { "token": "0123456789abcdef0123456789abcdef", "url": "/otterscope/s/0123…" }
@@ -148,7 +148,7 @@ window, or `limit`; otherwise `400`. Unknown run: `404`. Runs are capped
 
 `GET /api/runs/{id}/shares` → `200 { "shares": [ { "token": "…", "createdAt": "…" } ] }`.
 
-`DELETE /api/shares/{token}` → `204`, or `404`.
+`DELETE /api/shares/{token}` (admin) → `204`, or `404`.
 
 `GET /api/shared/{token}` → `200` (public, no auth) with `{ "run": …, "steps": […] }`,
 or `404` for an unknown/revoked token.
@@ -220,4 +220,7 @@ secret.
 ## MCP
 
 `POST /mcp` — MCP Streamable HTTP (JSON-RPC 2.0). Guarded and token-protected
-like the API. Unavailable builds answer `501`.
+like the API. This build always mounts the MCP router, so the endpoint answers
+JSON-RPC: a valid request returns `200` with a JSON-RPC result, and protocol
+errors come back as JSON-RPC errors. A build without an MCP router would answer
+`501`.
